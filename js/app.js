@@ -617,7 +617,7 @@ window.addEventListener('drop', async (e) => {
 // ---------------- startup ----------------
 selectTool('hand');
 DR.preload();
-if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => {});
 
 let incoming = false;
 if ('launchQueue' in window) {
@@ -654,4 +654,5 @@ showDoc();
 
 // expose for debugging
 window.__wave = { S, VW, AN, openBytes };
+window.__waveReady = true;
 void emit; void idbGet;

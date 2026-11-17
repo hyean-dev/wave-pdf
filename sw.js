@@ -1,16 +1,16 @@
 // Wave PDF service worker: offline app shell + Android share target
-const VERSION = 'wavepdf-v1.2.0';
+const VERSION = 'wavepdf-v1.3.0';
 const CORE = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'js/app.js', 'js/state.js', 'js/util.js', 'js/icons.js', 'js/store.js', 'js/viewer.js', 'js/annots.js',
   'js/pdfio.js', 'js/drive.js', 'js/pages.js', 'js/sign.js', 'js/ai.js',
   'vendor/pdf-lib.min.js', 'vendor/fontkit.umd.min.js', 'vendor/Sortable.min.js',
-  'vendor/pdfjs/pdf.min.mjs', 'vendor/pdfjs/pdf.worker.min.mjs', 'vendor/pdfjs/pdf_viewer.mjs', 'vendor/pdfjs/pdf_viewer.css',
+  'vendor/pdfjs-5.7.284/pdf.min.mjs', 'vendor/pdfjs-5.7.284/pdf.worker.min.mjs', 'vendor/pdfjs-5.7.284/pdf_viewer.mjs', 'vendor/pdfjs-5.7.284/pdf_viewer.css',
   'icons/icon-192.png', 'icons/icon-512.png',
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(CORE)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(CORE.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k.startsWith('wavepdf-v') && k !== VERSION).map((k) => caches.delete(k)))).then(() => self.clients.claim()));

@@ -1,11 +1,11 @@
-import * as pdfjsLib from '../vendor/pdfjs/pdf.min.mjs';
+import * as pdfjsLib from '../vendor/pdfjs-5.7.284/pdf.min.mjs';
 import { S, emit } from './state.js';
 
 globalThis.pdfjsLib = pdfjsLib;
-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdfjs/pdf.worker.min.mjs', import.meta.url).href;
-const V = await import('../vendor/pdfjs/pdf_viewer.mjs');
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdfjs-5.7.284/pdf.worker.min.mjs', import.meta.url).href;
+const V = await import('../vendor/pdfjs-5.7.284/pdf_viewer.mjs');
 
-const BASE = new URL('../vendor/pdfjs/', import.meta.url).href;
+const BASE = new URL('../vendor/pdfjs-5.7.284/', import.meta.url).href;
 export const DOC_OPTS = {
   cMapUrl: BASE + 'cmaps/',
   cMapPacked: true,
