@@ -71,7 +71,9 @@ async function buildContext() {
 async function callClaude(messages, { maxTokens = 4096, onText } = {}) {
   const key = getKey();
   if (!key) throw new Error('NO_KEY');
-  const r = await fetch(API, {
+  let r;
+  try {
+    r = await fetch(API, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -80,7 +82,10 @@ async function callClaude(messages, { maxTokens = 4096, onText } = {}) {
       'anthropic-dangerous-direct-browser-access': 'true',
     },
     body: JSON.stringify({ model: getModel(), max_tokens: maxTokens, system: SYSTEM, messages, stream: true }),
-  });
+    });
+  } catch {
+    throw new Error('api.anthropic.com에 연결하지 못했어요. 애드가드 같은 광고 차단 앱이나 회사망이 막고 있는지 확인해 주세요.');
+  }
   if (!r.ok) {
     let msg = `${r.status}`;
     try { const j = await r.json(); msg = j.error?.message || msg; } catch { /* */ }
