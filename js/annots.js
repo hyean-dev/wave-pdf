@@ -366,8 +366,27 @@ function getChars(pv, wrap) {
       ni++;
     }
   }
-  pv._chars = { key, chars };
-  return chars;
+  const ordered = visualOrder(chars);
+  pv._chars = { key, chars: ordered };
+  return ordered;
+}
+/** Re-order characters by on-screen lines (top→bottom, left→right) so selection
+ *  follows what the user sees, not the PDF's internal text order. */
+function visualOrder(chars) {
+  if (chars.length < 2) return chars;
+  const byY = chars.map((c) => ({ c, cy: (c.y1 + c.y2) / 2, h: c.y2 - c.y1 })).sort((a, b) => a.cy - b.cy);
+  const lines = [];
+  for (const it of byY) {
+    const ln = lines[lines.length - 1];
+    if (ln && Math.abs(it.cy - ln.cy) < Math.max(it.h, ln.h) * 0.45) {
+      ln.items.push(it.c);
+      ln.cy = (ln.cy * (ln.items.length - 1) + it.cy) / ln.items.length;
+      ln.h = Math.max(ln.h, it.h);
+    } else lines.push({ cy: it.cy, h: it.h, items: [it.c] });
+  }
+  const out = [];
+  for (const ln of lines) out.push(...ln.items.sort((a, b) => a.x1 - b.x1));
+  return out;
 }
 function nearestChar(chars, p, maxD = Infinity) {
   let best = -1, bd = Infinity;
@@ -773,7 +792,7 @@ function finishEdit() {
   let newRect = a.rect;
   if (pv?.viewport && text && !rotDelta(pv.viewport, a)) {
     const vp = pv.viewport, v = rectToV(vp, a.rect);
-    const h = Math.max(measureHeight(a, text, vp), ta.offsetHeight || 0, (a.fontSize || 12) * 1.25 * vp.scale + 4 * vp.scale);
+    const h = Math.max(measureHeight(a, text, vp), (a.fontSize || 12) * 1.25 * vp.scale + 4 * vp.scale);
     newRect = rectToPdf(vp, [v[0], v[1], v[2], v[1] + h]);
   }
   editing = null;
