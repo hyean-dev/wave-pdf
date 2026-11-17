@@ -356,3 +356,9 @@ a.pg { color: var(--accent-2); cursor: pointer; text-decoration: underline; text
 .ai-send { color: var(--accent); }
 
 .busy-slow { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); margin-top: 6px; flex-wrap: wrap; justify-content: center; }
+
+/* ---------- view modes ---------- */
+body.view-dark #viewerContainer { background: #15191d; }
+body.view-dark .pdfViewer .page { filter: invert(0.92) hue-rotate(180deg); box-shadow: none; }
+body.view-sepia #viewerContainer { background: #d9cfbd; }
+body.view-sepia .pdfViewer .page { filter: sepia(0.45) brightness(0.93) contrast(0.95); }

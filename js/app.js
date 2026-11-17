@@ -533,6 +533,25 @@ $('#pageInd').onclick = async () => {
   if (v) VW.goToPage(parseInt(v, 10));
 };
 
+// ---------------- view mode (normal / dark / sepia) ----------------
+const VIEW_MODES = [['normal', 'sun', '기본'], ['dark', 'moon', '흑백 반전'], ['sepia', 'coffee', '세피아']];
+function applyViewMode(m) {
+  document.body.classList.remove('view-dark', 'view-sepia');
+  if (m !== 'normal') document.body.classList.add('view-' + m);
+  const cur = VIEW_MODES.find((v) => v[0] === m) || VIEW_MODES[0];
+  $('#viewMode').innerHTML = icon(cur[1]);
+  localStorage.setItem('viewMode', m);
+}
+function cycleViewMode() {
+  const cur = localStorage.getItem('viewMode') || 'normal';
+  const i = VIEW_MODES.findIndex((v) => v[0] === cur);
+  const next = VIEW_MODES[(i + 1) % VIEW_MODES.length];
+  applyViewMode(next[0]);
+  toast(`보기 모드: ${next[2]}`);
+}
+applyViewMode(localStorage.getItem('viewMode') || 'normal');
+$('#viewMode').onclick = cycleViewMode;
+
 // ---------------- header buttons ----------------
 $('#btnMenu').onclick = openMenu;
 $('#btnPanel').onclick = () => togglePanel();
@@ -600,6 +619,7 @@ document.addEventListener('keydown', (e) => {
   if (mod && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) { e.preventDefault(); AN.redo(); return; }
   if ((e.key === 'Delete' || e.key === 'Backspace') && S.selected) { e.preventDefault(); AN.deleteSelected(); return; }
   if (e.key === 'Escape') { if (S.tool !== 'hand') selectTool('hand'); else AN.deselect(); }
+  if (!mod && !e.altKey && e.key === 'd' && S.pdfDoc) { cycleViewMode(); return; }
   const map = { h: 'hand', t: 'text', y: 'highlight', u: 'underline', p: 'pen', m: 'marker', e: 'eraser', x: 'freetext', n: 'note' };
   if (!mod && !e.altKey && map[e.key] && S.pdfDoc) onToolClick(map[e.key]);
 });
