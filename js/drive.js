@@ -2,7 +2,7 @@
 import { el, modal, toast, icon, fmtDate, fmtSize, busy } from './util.js';
 
 const SCOPE = 'https://www.googleapis.com/auth/drive';
-export const DEFAULT_CLIENT_ID = '';
+export const DEFAULT_CLIENT_ID = '1282005054-nru77ugk4q3gkrm4st9sob8pt0j84ejg.apps.googleusercontent.com';
 export const getClientId = () => (localStorage.getItem('gClientId') || DEFAULT_CLIENT_ID).trim();
 export const setClientId = (v) => { localStorage.setItem('gClientId', v.trim()); tokenClient = null; preload(); };
 
