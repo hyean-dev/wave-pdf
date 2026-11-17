@@ -847,3 +847,11 @@ export function focusAnnotation(p, id) {
   scrollToPoint(p, bb[0] - 20, bb[3] + 40);
   setTimeout(() => select(p, id), 250);
 }
+
+/** Add annotations from outside (e.g. Claude). items: [{page, type, ...props}] */
+export function addAnnotations(items) {
+  const pages = [...new Set(items.map((i) => i.page))];
+  commit(() => {
+    for (const { page, type, ...props } of items) pageAnns(page).push(newAnn(type, { author: props.author || S.author, ...props }));
+  }, pages);
+}

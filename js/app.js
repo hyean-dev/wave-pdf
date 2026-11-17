@@ -7,13 +7,14 @@ import { prepare, buildPdf, qpdf } from './pdfio.js';
 import * as DR from './drive.js';
 import { openPageEditor } from './pages.js';
 import { pickSignature } from './sign.js';
+import { initAI, toggleAI } from './ai.js';
 
 const APP_VERSION = '1.0.0';
 const container = $('#viewerContainer');
 
 // ---------------- icons ----------------
 const setIcon = (sel, name) => { const e = $(sel); if (e) e.innerHTML = icon(name); };
-setIcon('#btnMenu', 'menu'); setIcon('#btnPanel', 'panel'); setIcon('#btnSearch', 'search'); setIcon('#btnPages', 'layers'); setIcon('#btnSave', 'save');
+setIcon('#btnMenu', 'menu'); setIcon('#btnPanel', 'panel'); setIcon('#btnSearch', 'search'); setIcon('#btnAI', 'sparkles'); setIcon('#btnPages', 'layers'); setIcon('#btnSave', 'save');
 setIcon('#searchPrev', 'up'); setIcon('#searchNext', 'down'); setIcon('#searchClose', 'x');
 setIcon('#zoomOut', 'minus'); setIcon('#zoomIn', 'plus');
 $('#btnUndo').innerHTML = `<span class="ico">${icon('undo')}</span><span class="lbl">취소</span>`;
@@ -24,6 +25,7 @@ $('#wlDrive').innerHTML = `${icon('drive')} 구글 드라이브에서 열기`;
 // ---------------- init viewer ----------------
 VW.initViewer(container);
 AN.initAnnots(container);
+initAI();
 
 // ---------------- tools ----------------
 const TOOLS = [
@@ -534,6 +536,7 @@ $('#pageInd').onclick = async () => {
 // ---------------- header buttons ----------------
 $('#btnMenu').onclick = openMenu;
 $('#btnPanel').onclick = () => togglePanel();
+$('#btnAI').onclick = () => toggleAI();
 $('#btnSearch').onclick = () => ($('#searchBar').hidden ? openSearch() : closeSearch());
 $('#btnPages').onclick = () => pageEditor();
 $('#btnSave').onclick = () => (S.pdfDoc ? save() : openMenu());
