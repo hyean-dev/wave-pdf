@@ -10,6 +10,8 @@ export const DOC_OPTS = {
   cMapUrl: BASE + 'cmaps/',
   cMapPacked: true,
   standardFontDataUrl: BASE + 'standard_fonts/',
+  wasmUrl: BASE + 'wasm/',
+  iccUrl: BASE + 'iccs/',
   isEvalSupported: false,
 };
 export { pdfjsLib };
