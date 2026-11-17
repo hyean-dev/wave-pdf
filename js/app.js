@@ -575,7 +575,7 @@ async function restoreSession() {
     if (sess.page) VW.goToPage(sess.page);
     showDoc();
     return true;
-  } catch (e) { console.warn(e); S.baseBytes = null; return false; }
+  } catch (e) { console.warn(e); S.baseBytes = null; S.pdfDoc = null; toast('복원 실패: ' + e.message); showDoc(); return false; }
   finally { b.close(); }
 }
 async function checkResume() {
@@ -648,7 +648,8 @@ if ('launchQueue' in window) {
   }
   await new Promise((r) => setTimeout(r, 250));
   if (incoming || S.pdfDoc) return;
-  if (!(await restoreSession())) { showDoc(); checkResume(); }
+  // don't auto-restore (a stuck restore would block the app); offer it on the welcome screen
+  showDoc(); checkResume();
 })();
 showDoc();
 

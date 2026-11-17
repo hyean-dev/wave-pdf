@@ -354,3 +354,5 @@ a.pg { color: var(--accent-2); cursor: pointer; text-decoration: underline; text
 .ai-compose { display: flex; align-items: flex-end; gap: 6px; padding: 8px 10px calc(8px + var(--safe-b)); border-top: 1px solid var(--line); }
 .ai-input { flex: 1; resize: none; border: 1px solid var(--line); border-radius: 12px; padding: 9px 12px; font: inherit; font-size: 15px; max-height: 140px; }
 .ai-send { color: var(--accent); }
+
+.busy-slow { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); margin-top: 6px; flex-wrap: wrap; justify-content: center; }

@@ -89,7 +89,17 @@ export function promptDialog(title, value = '', { placeholder = '', type = 'text
 export function busy(msg = '처리 중…') {
   const b = el('div', { class: 'busy' }, el('div', { class: 'spinner' }), el('div', { class: 'busy-msg' }, msg));
   document.body.append(b);
-  return { close: () => b.remove(), set: (m) => (b.querySelector('.busy-msg').textContent = m) };
+  const t = setTimeout(() => {
+    if (!b.isConnected) return;
+    b.append(el('div', { class: 'busy-slow' }, '오래 걸리고 있어요.',
+      el('button', { class: 'btn small', onclick: () => b.remove() }, '닫기'),
+      el('button', { class: 'btn small', onclick: () => location.replace(location.pathname + '?reset=1') }, '앱 초기화')));
+  }, 12000);
+  return { close: () => { clearTimeout(t); b.remove(); }, set: (m) => (b.querySelector('.busy-msg').textContent = m) };
+}
+/** reject if a promise takes longer than ms */
+export function withTimeout(p, ms, msg) {
+  return Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(msg)), ms))]);
 }
 
 export function downloadBlob(blob, name) {

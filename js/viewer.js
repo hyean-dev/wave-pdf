@@ -1,5 +1,6 @@
 import * as pdfjsLib from '../vendor/pdfjs-5.7.284/pdf.min.mjs';
 import { S, emit } from './state.js';
+import { withTimeout } from './util.js';
 
 globalThis.pdfjsLib = pdfjsLib;
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdfjs-5.7.284/pdf.worker.min.mjs', import.meta.url).href;
@@ -45,7 +46,7 @@ export async function openDocument(bytes, { keepView = false } = {}) {
     ? { page: viewer.currentPageNumber, scale: viewer.currentScaleValue }
     : null;
   const task = pdfjsLib.getDocument({ ...DOC_OPTS, data: bytes.slice() });
-  const doc = await task.promise;
+  const doc = await withTimeout(task.promise, 45000, 'PDF 엔진이 응답하지 않아요 (네트워크 확인 후 다시 시도)');
   const old = S.pdfDoc;
   const inited = new Promise((r) => eventBus.on('pagesinit', r, { once: true }));
   viewer.setDocument(doc);
@@ -53,7 +54,7 @@ export async function openDocument(bytes, { keepView = false } = {}) {
   S.pdfDoc = doc;
   doc.annotationStorage.onSetModified = () => { S.dirty = true; emit('changed', { forms: true }); };
   if (old) old.destroy().catch(() => {});
-  await inited;
+  await withTimeout(inited, 20000, '화면 준비가 끝나지 않았어요');
   if (prev) {
     viewer.currentScaleValue = prev.scale;
     viewer.currentPageNumber = Math.min(prev.page, doc.numPages);

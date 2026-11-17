@@ -14,6 +14,19 @@
   <link rel="stylesheet" href="vendor/pdfjs-5.7.284/pdf_viewer.css">
   <link rel="stylesheet" href="css/app.css">
   <script>
+    // ?reset=1 : clear service worker, caches and saved session, then restart (recovery link)
+    if (/[?&]reset\b/.test(location.search)) {
+      document.write('<p style="font:16px sans-serif;padding:24px">초기화 중…</p>');
+      (async function () {
+        try { var rs = await navigator.serviceWorker.getRegistrations(); for (var r of rs) await r.unregister(); } catch (e) {}
+        try { var ks = await caches.keys(); for (var k of ks) await caches.delete(k); } catch (e) {}
+        try { indexedDB.deleteDatabase('wavepdf'); } catch (e) {}
+        location.replace(location.pathname);
+      })();
+      throw new Error('resetting');
+    }
+  </script>
+  <script>
     // Show startup errors on screen and offer a cache reset (helps installed apps recover)
     (function () {
       var shown = false;
@@ -30,7 +43,7 @@
         };
         (document.body || document.documentElement).appendChild(d);
       }
-      window.addEventListener('error', function (e) { if (e.message) show(e.message); });
+      window.addEventListener('error', function (e) { if (e.message && e.message.indexOf('resetting') < 0) show(e.message); });
       window.addEventListener('unhandledrejection', function (e) { var m = e.reason && (e.reason.message || e.reason); if (m && !window.__waveReady) show(m); });
       setTimeout(function () { if (!window.__waveReady) show('시작 시간이 초과됐어요'); }, 15000);
     })();
