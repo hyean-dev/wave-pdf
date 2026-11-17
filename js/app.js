@@ -206,8 +206,8 @@ async function pickPdfAny() {
 }
 
 // ---------------- save ----------------
-async function exportBytes() {
-  const b = busy('PDF 만드는 중…');
+async function exportBytes({ quiet = false } = {}) {
+  const b = quiet ? { close() {} } : busy('PDF 만드는 중…');
   try {
     const forms = await VW.collectFormValues();
     let bytes = await buildPdf({ base: S.baseBytes, annots: S.annots, images: S.images, forms });
@@ -227,11 +227,15 @@ async function save() {
   try {
     if (src.type === 'drive' && src.driveId && src.canEdit !== false && DR.isConfigured()) {
       const tokP = DR.ensureToken().catch((e) => e);
-      if (!(await confirmDialog('구글 드라이브 원본에 덮어쓸까요? (드라이브 버전 기록에서 이전 버전을 되돌릴 수 있어요)', '덮어쓰기'))) return;
+      if (!autoOn() && !(await confirmDialog('구글 드라이브 원본에 덮어쓸까요? (드라이브 버전 기록에서 이전 버전을 되돌릴 수 있어요)', '덮어쓰기'))) return;
       const t = await tokP;
       if (t instanceof Error) throw t;
+      clearTimeout(autoTimer);
+      const rev = S.rev;
       const bytes = await exportBytes();
       await DR.withBusy('드라이브에 저장 중…', () => DR.updateFile(src.driveId, bytes));
+      if (S.rev !== rev) { scheduleAutoSave(); return; }
+      setStatus('저장됨');
       return markSaved('드라이브에 저장했어요');
     }
     if (src.handle?.createWritable) {
@@ -244,6 +248,41 @@ async function save() {
     }
     await saveToDevice();
   } catch (e) { if (e?.message !== 'CANCELLED') toast('저장 실패: ' + e.message); console.error(e); }
+}
+
+// ---------------- Drive auto-save ----------------
+S.rev = 0;
+const autoOn = () => localStorage.getItem('autoDrive') !== '0';
+let autoTimer = null, autoBusy = false, statusTimer = null;
+function setStatus(t, sticky = false) {
+  const e = $('#saveStatus');
+  e.textContent = t || ''; e.hidden = !t;
+  clearTimeout(statusTimer);
+  if (t && !sticky) statusTimer = setTimeout(() => { e.hidden = true; }, 4000);
+}
+const isDriveDoc = () => { const s = S.source || {}; return s.type === 'drive' && s.driveId && s.canEdit !== false && DR.isConfigured(); };
+function scheduleAutoSave() {
+  if (!autoOn() || !isDriveDoc() || !S.dirty) return;
+  clearTimeout(autoTimer);
+  setStatus('변경됨', true);
+  autoTimer = setTimeout(autoSave, 4000);
+}
+async function autoSave() {
+  if (autoBusy) { autoTimer = setTimeout(autoSave, 2000); return; }
+  if (!isDriveDoc() || !S.dirty) return;
+  if (!DR.isSignedIn()) { setStatus('로그인 필요 · 저장 버튼', true); return; }
+  autoBusy = true;
+  const rev = S.rev;
+  setStatus('저장 중…', true);
+  try {
+    const bytes = await exportBytes({ quiet: true });
+    await DR.updateFile(S.source.driveId, bytes);
+    if (S.rev === rev) { S.dirty = false; updateTitle(); persistState(); setStatus('드라이브에 저장됨'); }
+    else scheduleAutoSave();
+  } catch (e) {
+    console.warn('autosave', e);
+    setStatus('자동 저장 실패 · 저장 버튼', true);
+  } finally { autoBusy = false; }
 }
 async function saveToDevice() {
   if (window.showSaveFilePicker) {
@@ -312,7 +351,8 @@ function pageEditor(mergeNow = false) {
       await VW.openDocument(newBase, { keepView: true });
       S.dirty = true;
       updateTitle();
-      persistBase(); persistState();
+      persistBase();
+      emit('changed', {});
       if (panelOpen) renderPanel();
       toast('페이지 편집을 적용했어요');
     },
@@ -355,7 +395,7 @@ async function setPassword() {
   const v = await promptDialog(S.password ? '새 암호 (비우면 암호 해제)' : '저장할 때 걸 암호', '', { type: 'password', placeholder: '암호' });
   if (v == null) return;
   S.password = v || null;
-  S.dirty = true; updateTitle(); persistState();
+  S.dirty = true; emit('changed', {});
   toast(v ? '저장할 때 암호가 걸려요' : '암호를 해제했어요 (저장 시 적용)');
 }
 async function closeDoc() {
@@ -371,10 +411,12 @@ async function closeDoc() {
 async function openSettings() {
   const author = el('input', { class: 'input', value: S.author });
   const penOnly = el('input', { type: 'checkbox', checked: CFG.penOnly });
+  const autoDrive = el('input', { type: 'checkbox', checked: autoOn() });
   const signed = DR.isSignedIn();
   const body = el('div', { class: 'settings' },
     el('label', { class: 'field' }, el('span', {}, '주석 작성자 이름'), author),
     el('label', { class: 'check' }, penOnly, ' 그리기 도구는 스타일러스로만 (손가락은 스크롤)'),
+    el('label', { class: 'check', style: { marginTop: '8px' } }, autoDrive, ' 드라이브 파일은 변경 후 자동 저장'),
     el('div', { class: 'field' }, el('span', {}, '구글 드라이브'),
       el('div', { class: 'row gap' },
         el('button', { class: 'btn small', onclick: () => DR.setupGuide() }, DR.isConfigured() ? '클라이언트 ID 변경' : '연결 설정'),
@@ -385,6 +427,7 @@ async function openSettings() {
   S.author = author.value.trim() || '재원';
   localStorage.setItem('author', S.author);
   CFG.penOnly = penOnly.checked; saveCfg();
+  localStorage.setItem('autoDrive', autoDrive.checked ? '1' : '0');
   renderToolOptions();
 }
 
@@ -482,7 +525,7 @@ $('#zoomVal').onclick = () => VW.setScaleValue(VW.viewer.currentScaleValue === '
 on('scale', (s) => ($('#zoomVal').textContent = Math.round(s * 100) + '%'));
 const updatePageInd = () => { if (S.pdfDoc) $('#pageInd').textContent = `${VW.viewer.currentPageNumber} / ${S.pdfDoc.numPages}`; };
 on('page', updatePageInd);
-on('docloaded', () => { updatePageInd(); $('#zoomVal').textContent = Math.round(VW.viewer.currentScale * 100) + '%'; });
+on('docloaded', () => { if (!S.dirty) setStatus(''); updatePageInd(); $('#zoomVal').textContent = Math.round(VW.viewer.currentScale * 100) + '%'; });
 $('#pageInd').onclick = async () => {
   const v = await promptDialog('이동할 페이지', String(VW.viewer.currentPageNumber), { type: 'number' });
   if (v) VW.goToPage(parseInt(v, 10));
@@ -511,7 +554,7 @@ const persistState = debounce(() => {
     dirty: S.dirty, page: VW.viewer.currentPageNumber, ver: S.baseVer, t: Date.now(),
   }).catch((e) => console.warn('persist', e));
 }, 700);
-on('changed', () => { updateTitle(); persistState(); refreshPanel(); });
+on('changed', () => { S.rev++; updateTitle(); persistState(); refreshPanel(); scheduleAutoSave(); });
 on('page', () => persistState());
 
 async function restoreSession() {

@@ -47,6 +47,7 @@ svg { display: block; }
   flex: 1; min-width: 0; font-weight: 600; font-size: 16px; padding: 0 6px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer;
 }
+#saveStatus { font-size: 12px; opacity: .85; white-space: nowrap; margin-right: 4px; }
 #dirtyDot { width: 8px; height: 8px; border-radius: 50%; background: #ffca28; flex: 0 0 auto; margin-right: 4px; }
 body:not(.has-doc) #btnSearch, body:not(.has-doc) #btnPages, body:not(.has-doc) #btnPanel { display: none; }
 
