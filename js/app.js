@@ -10,7 +10,7 @@ import { pickSignature } from './sign.js';
 import { initAI, toggleAI, aiBusy } from './ai.js';
 import * as OL from './outline.js';
 
-const APP_VERSION = '1.15.0';
+const APP_VERSION = '1.15.1';
 const container = $('#viewerContainer');
 
 // ---------------- icons ----------------
@@ -682,7 +682,7 @@ async function closeDoc() { return closeTab(activeTab); }
 
 function showShortcuts() {
   const groups = [
-    ['파일·탭', [['Ctrl+O', '열기'], ['Ctrl+S', '저장'], ['Ctrl+Tab / Ctrl+PgDn', '다음 탭'], ['Ctrl+Shift+Tab / Ctrl+PgUp', '이전 탭']]],
+    ['파일·탭', [['Ctrl+O', '열기'], ['Ctrl+S', '저장'], ['Ctrl+1 ~ Ctrl+9', '1~9번째 탭으로'], ['Ctrl+Tab / Ctrl+PgDn', '다음 탭'], ['Ctrl+Shift+Tab / Ctrl+PgUp', '이전 탭']]],
     ['보기', [['D', '화면 모드 (기본 → 흑백 반전 → 세피아)'], ['Ctrl+F', '검색'], ['Ctrl+휠', '확대·축소']]],
     ['도구', [['H', '이동(손)'], ['T', '텍스트 선택'], ['Y', '형광펜'], ['U', '밑줄'], ['P', '펜'], ['M', '마커'], ['E', '지우개'], ['X', '글상자'], ['N', '메모'], ['Esc', '이동 도구로 / 선택 해제']]],
     ['편집', [['Ctrl+Z', '되돌리기'], ['Ctrl+Y / Ctrl+Shift+Z', '다시 실행'], ['Delete', '선택한 주석 삭제'], ['Ctrl+B', '글상자 굵게 (입력 중)']]],
@@ -1048,6 +1048,7 @@ document.addEventListener('keydown', (e) => {
   if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); save(); return; }
   if (mod && e.key.toLowerCase() === 'o') { e.preventDefault(); openLocal(); return; }
   if (mod && e.key.toLowerCase() === 'f') { e.preventDefault(); openSearch(); return; }
+  if (mod && !e.shiftKey && !e.altKey && /^[1-9]$/.test(e.key) && tabs.length) { e.preventDefault(); switchTab(tabs[+e.key - 1]); return; }
   if (mod && e.key === 'Tab') { e.preventDefault(); cycleTab(e.shiftKey ? -1 : 1); return; }
   if (mod && (e.key === 'PageDown' || e.key === 'PageUp')) { e.preventDefault(); cycleTab(e.key === 'PageDown' ? 1 : -1); return; }
   if (typing || document.querySelector('.modal-back')) return;
