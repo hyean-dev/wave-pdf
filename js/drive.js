@@ -138,6 +138,38 @@ export function fileKind(f) {
 }
 
 
+// ---------------- docx pre-processing for Google's converter ----------------
+// Google Docs drops dotted/dashed/double table borders when importing Word files,
+// so table lines vanish. Rewrite those borders as plain single lines before uploading.
+let jszipP;
+function loadJSZip() {
+  return (jszipP ||= new Promise((res, rej) => {
+    if (window.JSZip) return res(window.JSZip);
+    const sc = document.createElement('script');
+    sc.src = new URL('../vendor/jszip.min.js', import.meta.url).href;
+    sc.onload = () => res(window.JSZip);
+    sc.onerror = () => { jszipP = null; rej(new Error('JSZip 로드 실패')); };
+    document.head.append(sc);
+  }));
+}
+const FANCY_BORDER = /w:val="(dotted|dashed|dashSmallGap|dotDash|dotDotDash|double|triple|thinThick[A-Za-z]*|thickThin[A-Za-z]*|thinThickThin[A-Za-z]*|wave|doubleWave|dashDotStroked|threeDEmboss|threeDEngrave|outset|inset)"/g;
+export async function prepareDocx(blob) {
+  try {
+    const JSZip = await loadJSZip();
+    const zip = await JSZip.loadAsync(blob);
+    let changed = false;
+    for (const name of Object.keys(zip.files)) {
+      if (!/^word\/(document|styles|header\d*|footer\d*)\.xml$/.test(name)) continue;
+      const xml = await zip.file(name).async('string');
+      const out = xml.replace(/<w:(tcBorders|tblBorders)>[\s\S]*?<\/w:\1>/g, (blk) => blk.replace(FANCY_BORDER, 'w:val="single"'));
+      if (out !== xml) { zip.file(name, out); changed = true; }
+    }
+    if (!changed) return blob;
+    return await zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', compression: 'DEFLATE' });
+  } catch (e) { console.warn('docx prepare skipped', e); return blob; }
+}
+const isDocx = (name, mime) => /\.docx$/i.test(name || '') || mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
 /** Export a Google Docs/Sheets/Slides file as PDF. files.export caps at 10MB, so fall back to the export link. */
 async function exportPdf(id) {
   try {
@@ -166,6 +198,7 @@ export async function downloadAsPdf(f, onStep = () => {}) {
     if (OFFICE[f.mimeType]) {
       onStep('구글 문서 형식으로 바꾸는 중…');
       try {
+        if (isDocx(f.name, f.mimeType)) throw new Error('docx → upload path (fix table borders)');
         const r = await api(`${D}files/${f.id}/copy?supportsAllDrives=true&fields=id,mimeType`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: tempName, mimeType: OFFICE[f.mimeType] }),
@@ -177,11 +210,13 @@ export async function downloadAsPdf(f, onStep = () => {}) {
       } catch (e1) {
         if (temp) { api(`${D}files/${temp}?supportsAllDrives=true`, { method: 'DELETE' }).catch(() => {}); temp = null; }
         console.warn('copy-convert failed, trying upload-convert', e1);
-        onStep('원본을 받아서 다시 변환하는 중…');
+        onStep('원본을 받아서 변환하는 중…');
         const bytes = await download(f.id);
+        let blob = new Blob([bytes], { type: f.mimeType });
+        if (isDocx(f.name, f.mimeType)) blob = await prepareDocx(blob);
         const fd = new FormData();
         fd.append('metadata', new Blob([JSON.stringify({ name: tempName, mimeType: OFFICE[f.mimeType] })], { type: 'application/json' }));
-        fd.append('file', new Blob([bytes], { type: f.mimeType }));
+        fd.append('file', blob);
         const r = await api(`${U}files?uploadType=multipart&fields=id`, { method: 'POST', body: fd });
         temp = (await r.json()).id;
       }
@@ -211,7 +246,7 @@ export async function convertLocalToPdf(file, onStep = () => {}) {
     onStep('드라이브에 임시로 올리는 중…');
     const fd = new FormData();
     fd.append('metadata', new Blob([JSON.stringify({ name: `[Wave PDF 변환중] ${file.name}`, mimeType: target })], { type: 'application/json' }));
-    fd.append('file', file);
+    fd.append('file', isDocx(file.name, file.type) ? await prepareDocx(file) : file);
     const r = await api(`${U}files?uploadType=multipart&fields=id,mimeType`, { method: 'POST', body: fd });
     temp = (await r.json()).id;
     onStep('PDF로 내보내는 중… (큰 파일은 1분까지 걸려요)');

@@ -51,6 +51,7 @@ async function onToolClick(k) {
 }
 function selectTool(k) {
   AN.setTool(k);
+  if (k !== 'hand') setToolbarHidden(false);
   $$('.tool[data-tool]').forEach((b) => b.classList.toggle('on', b.dataset.tool === k));
   optsOpen = ['highlight', 'underline', 'strike', 'pen', 'marker', 'freetext', 'shape', 'note', 'eraser'].includes(k);
   renderToolOptions();
@@ -456,11 +457,13 @@ async function openSettings() {
   const author = el('input', { class: 'input', value: S.author });
   const penOnly = el('input', { type: 'checkbox', checked: CFG.penOnly });
   const autoDrive = el('input', { type: 'checkbox', checked: autoOn() });
+  const autoHide = el('input', { type: 'checkbox', checked: autoHideOn() });
   const signed = DR.isSignedIn();
   const body = el('div', { class: 'settings' },
     el('label', { class: 'field' }, el('span', {}, '주석 작성자 이름'), author),
     el('label', { class: 'check' }, penOnly, ' 그리기 도구는 스타일러스로만 (손가락은 스크롤)'),
     el('label', { class: 'check', style: { marginTop: '8px' } }, autoDrive, ' 드라이브 파일은 변경 후 자동 저장'),
+    el('label', { class: 'check', style: { marginTop: '8px' } }, autoHide, ' 스크롤하면 아래 도구 막대 자동 숨김'),
     el('div', { class: 'field' }, el('span', {}, '구글 드라이브'),
       el('div', { class: 'row gap' },
         el('button', { class: 'btn small', onclick: () => DR.setupGuide() }, DR.isConfigured() ? '클라이언트 ID 변경' : '연결 설정'),
@@ -472,6 +475,8 @@ async function openSettings() {
   localStorage.setItem('author', S.author);
   CFG.penOnly = penOnly.checked; saveCfg();
   localStorage.setItem('autoDrive', autoDrive.checked ? '1' : '0');
+  localStorage.setItem('autoHideToolbar', autoHide.checked ? '1' : '0');
+  if (!autoHide.checked) setToolbarHidden(false);
   renderToolOptions();
 }
 
@@ -574,6 +579,34 @@ $('#pageInd').onclick = async () => {
   const v = await promptDialog('이동할 페이지', String(VW.viewer.currentPageNumber), { type: 'number' });
   if (v) VW.goToPage(parseInt(v, 10));
 };
+
+// ---------------- auto-hide bottom toolbar ----------------
+const autoHideOn = () => localStorage.getItem('autoHideToolbar') !== '0';
+let tbHidden = false, lastTop = 0;
+function setToolbarHidden(h) {
+  if (h && (!autoHideOn() || S.tool !== 'hand' || !S.pdfDoc || !$('#toolOptions').hidden)) h = false;
+  if (h === tbHidden) return;
+  tbHidden = h;
+  document.body.classList.toggle('tb-hidden', h);
+}
+container.addEventListener('scroll', () => {
+  const t = container.scrollTop, d = t - lastTop;
+  lastTop = t;
+  if (d > 14) setToolbarHidden(true);
+  else if (d < -14) setToolbarHidden(false);
+}, { passive: true });
+document.addEventListener('mousemove', (e) => { if (tbHidden && e.clientY > window.innerHeight - 90) setToolbarHidden(false); }, { passive: true });
+{ // tap on the page (touch) toggles the toolbar
+  let down = null;
+  container.addEventListener('pointerdown', (e) => { down = e.pointerType === 'touch' ? { x: e.clientX, y: e.clientY, t: Date.now() } : null; }, { passive: true });
+  container.addEventListener('pointerup', (e) => {
+    if (!down || S.tool !== 'hand') return;
+    const quick = Date.now() - down.t < 300 && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 8;
+    down = null;
+    if (!quick || e.target.closest?.('.ann, .sel-box, .annotationLayer a, .annotationLayer input, .annotationLayer select, .annotationLayer textarea')) return;
+    setToolbarHidden(!tbHidden);
+  });
+}
 
 // ---------------- view mode (normal / dark / sepia) ----------------
 const VIEW_MODES = [['normal', 'sun', '기본'], ['dark', 'moon', '흑백 반전'], ['sepia', 'coffee', '세피아']];
