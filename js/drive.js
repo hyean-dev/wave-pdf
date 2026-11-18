@@ -330,7 +330,7 @@ export function browse({ mode = 'file', title } = {}) {
     const list = el('div', { class: 'drv-list' });
     const crumbs = el('div', { class: 'drv-crumbs' });
     const more = el('button', { class: 'btn small drv-more', onclick: () => load(true) }, '더 보기');
-    const search = el('input', { class: 'input', type: 'search', placeholder: mode === 'file' ? '파일 이름 검색 (띄어쓰기로 여러 단어)' : '폴더 이름 검색' });
+    const search = el('input', { class: 'input', type: 'search', placeholder: mode === 'file' ? 'PDF 이름 검색 (띄어쓰기로 여러 단어)' : '폴더 이름 검색' });
     const tabs = el('div', { class: 'seg' });
     const tabDefs = mode === 'file' ? [['mine', '내 드라이브'], ['recent', '최근'], ['shared', '공유됨']] : [['mine', '내 드라이브'], ['shared', '공유됨']];
     for (const [k, label] of tabDefs) {
@@ -351,12 +351,12 @@ export function browse({ mode = 'file', title } = {}) {
     async function load(append = false) {
       renderCrumbs();
       if (!append) { list.replaceChildren(el('div', { class: 'muted pad' }, '불러오는 중…')); nextToken = null; }
-      const pdfQ = mode === 'file' ? "mimeType != 'application/vnd.google-apps.shortcut'" : "mimeType='application/vnd.google-apps.folder'";
+      const pdfQ = mode === 'file' ? `(mimeType='application/pdf' or mimeType='${FOLDER}')` : "mimeType='application/vnd.google-apps.folder'";
       let q, orderBy = (SORTS.find((x) => x[0] === sortKey) || SORTS[0])[2];
       if (query && mode === 'file') {
         if (!append) list.replaceChildren(el('div', { class: 'muted pad' }, '드라이브에서 찾는 중… (처음 한 번은 목록을 불러와서 조금 걸려요)'));
         try {
-          const found = await searchFiles(query);
+          const found = (await searchFiles(query)).filter((f) => fileKind(f).k === 'pdf');
           const res = [...sortFiles(found.filter((f) => !f._content), sortKey), ...found.filter((f) => f._content)];
           list.replaceChildren();
           let shownContent = false;
@@ -370,7 +370,7 @@ export function browse({ mode = 'file', title } = {}) {
         return;
       }
       if (query) { q = `name contains '${esc(query)}' and mimeType='application/vnd.google-apps.folder' and trashed=false`; orderBy = 'modifiedTime desc'; }
-      else if (tab === 'recent') { q = `mimeType != '${FOLDER}' and trashed=false`; orderBy = 'viewedByMeTime desc'; }
+      else if (tab === 'recent') { q = "mimeType='application/pdf' and trashed=false"; orderBy = 'viewedByMeTime desc'; }
       else if (tab === 'shared' && stack.length === 1) { q = `sharedWithMe and ${pdfQ} and trashed=false`; }
       else q = `'${stack[stack.length - 1].id}' in parents and ${pdfQ} and trashed=false`;
       try {

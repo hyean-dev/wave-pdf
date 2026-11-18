@@ -157,7 +157,7 @@ function updateTitle() {
 }
 
 
-const OPEN_ACCEPT = 'application/pdf,.pdf,.docx,.doc,.rtf,.odt,.txt,.xlsx,.xls,.csv,.ods,.pptx,.ppt,.odp';
+const OPEN_ACCEPT = 'application/pdf,.pdf';
 const isPdfFile = (f) => /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name);
 /** Local file → {bytes, name} as PDF (Office files converted through Drive). null if cancelled. */
 async function localFileAsPdf(f) {
@@ -185,10 +185,7 @@ async function openLocalFile(f, handle) {
 async function openLocal() {
   if (window.showOpenFilePicker) {
     try {
-      const [h] = await window.showOpenFilePicker({ types: [
-        { description: 'PDF', accept: { 'application/pdf': ['.pdf'] } },
-        { description: '워드·엑셀·파워포인트 (PDF로 변환)', accept: { 'application/octet-stream': ['.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt', '.rtf', '.odt', '.ods', '.odp', '.csv', '.txt'] } },
-      ] });
+      const [h] = await window.showOpenFilePicker({ types: [{ description: 'PDF', accept: { 'application/pdf': ['.pdf'] } }], excludeAcceptAllOption: true });
       const f = await h.getFile();
       return openLocalFile(f, h);
     } catch (e) { if (e.name !== 'AbortError') toast(e.message); return; }
