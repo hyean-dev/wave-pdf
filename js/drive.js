@@ -137,6 +137,27 @@ export function fileKind(f) {
   return { k: 'other', label: '열 수 없는 형식' };
 }
 
+
+/** Export a Google Docs/Sheets/Slides file as PDF. files.export caps at 10MB, so fall back to the export link. */
+async function exportPdf(id) {
+  try {
+    const r = await api(`${D}files/${id}/export?mimeType=application/pdf`);
+    return new Uint8Array(await r.arrayBuffer());
+  } catch (e) {
+    if (!/too large|exportSizeLimit|size limit/i.test(e.message)) throw e;
+  }
+  const meta = await (await api(`${D}files/${id}?fields=exportLinks&supportsAllDrives=true`)).json();
+  const link = meta.exportLinks?.['application/pdf'];
+  if (!link) throw new Error('큰 파일 내보내기 주소를 받지 못했어요');
+  try {
+    const r = await api(link);
+    return new Uint8Array(await r.arrayBuffer());
+  } catch (e) {
+    console.warn('exportLinks failed', e);
+    throw new Error('변환된 PDF가 커서(10MB 초과) 드라이브가 내보내기를 거부했어요. 워드에서 PDF로 저장해서 열어주세요.');
+  }
+}
+
 /** PDF bytes for a Google/Office document (Office files are converted via a temporary Google copy) */
 export async function downloadAsPdf(f, onStep = () => {}) {
   let id = f.id, temp = null;
@@ -167,15 +188,7 @@ export async function downloadAsPdf(f, onStep = () => {}) {
       id = temp;
     }
     onStep('PDF로 내보내는 중…');
-    try {
-      const r = await api(`${D}files/${id}/export?mimeType=application/pdf`);
-      return new Uint8Array(await r.arrayBuffer());
-    } catch (e) {
-      if (/too large|exportSizeLimit|size limit/i.test(e.message)) {
-        throw new Error('변환된 PDF가 구글 드라이브 내보내기 한도(10MB)를 넘었어요. 워드에서 PDF로 저장한 파일을 드라이브에 올려서 열어주세요.');
-      }
-      throw e;
-    }
+    return await exportPdf(id);
   } finally {
     if (temp) api(`${D}files/${temp}?supportsAllDrives=true`, { method: 'DELETE' }).catch(() => {});
   }
@@ -201,14 +214,8 @@ export async function convertLocalToPdf(file, onStep = () => {}) {
     fd.append('file', file);
     const r = await api(`${U}files?uploadType=multipart&fields=id,mimeType`, { method: 'POST', body: fd });
     temp = (await r.json()).id;
-    onStep('PDF로 내보내는 중…');
-    try {
-      const e = await api(`${D}files/${temp}/export?mimeType=application/pdf`);
-      return new Uint8Array(await e.arrayBuffer());
-    } catch (e) {
-      if (/too large|exportSizeLimit|size limit/i.test(e.message)) throw new Error('변환된 PDF가 구글 드라이브 내보내기 한도(10MB)를 넘었어요. 워드에서 PDF로 저장해서 열어주세요.');
-      throw e;
-    }
+    onStep('PDF로 내보내는 중… (큰 파일은 1분까지 걸려요)');
+    return await exportPdf(temp);
   } finally {
     if (temp) api(`${D}files/${temp}?supportsAllDrives=true`, { method: 'DELETE' }).catch(() => {});
   }
