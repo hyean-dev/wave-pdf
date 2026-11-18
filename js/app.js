@@ -8,6 +8,7 @@ import * as DR from './drive.js';
 import { openPageEditor } from './pages.js';
 import { pickSignature } from './sign.js';
 import { initAI, toggleAI } from './ai.js';
+import * as OL from './outline.js';
 
 const APP_VERSION = '1.0.0';
 const container = $('#viewerContainer');
@@ -149,6 +150,7 @@ async function openBytes(bytes, name, source) {
     S.source = source || { type: 'local' };
     S.baseVer = Date.now();
     S.dirty = false;
+    S.outline = null; S.outlineDirty = false; S.outlineAuto = false; S.prevOutline = undefined;
     AN.resetHistory();
     await VW.openDocument(prep.base);
     while (S.annots.length < S.pdfDoc.numPages) S.annots.push([]);
@@ -272,7 +274,8 @@ async function exportBytes({ quiet = false } = {}) {
   const b = quiet ? { close() {} } : busy('PDF 만드는 중…');
   try {
     const forms = await VW.collectFormValues();
-    let bytes = await buildPdf({ base: S.baseBytes, annots: S.annots, images: S.images, forms });
+    const outline = S.outline && (S.outlineDirty || S.outlineAuto) ? S.outline : null;
+    let bytes = await buildPdf({ base: S.baseBytes, annots: S.annots, images: S.images, forms, outline });
     if (S.password) bytes = await qpdf(bytes, ['--encrypt', S.password, S.password, '256', '--']);
     return bytes;
   } finally { b.close(); }
@@ -406,7 +409,13 @@ function pageEditor(mergeNow = false) {
     askPassword,
     collectForms: () => VW.collectFormValues(),
     exportBytes: exportTo,
-    commitBase: async (newBase, newAnnots) => {
+    commitBase: async (newBase, newAnnots, items) => {
+      if (S.outline && (S.outlineDirty || S.outlineAuto)) {
+        const map = new Map();
+        items.forEach((it, i) => { if (it.src === 'base') map.set(it.index, i); });
+        S.outline = OL.normalizeLevels(S.outline.filter((o) => map.has(o.page)).map((o) => ({ ...o, page: map.get(o.page) })));
+        S.outlineDirty = true;
+      }
       S.baseBytes = newBase;
       S.annots = newAnnots;
       S.baseVer = Date.now();
@@ -464,7 +473,7 @@ async function setPassword() {
 async function closeDoc() {
   if (S.dirty && !(await confirmDialog('저장하지 않은 변경사항이 있어요. 닫을까요?', '닫기', true))) return;
   VW.closeDocument();
-  S.baseBytes = null; S.annots = []; S.dirty = false; S.source = null; S.password = null;
+  S.baseBytes = null; S.annots = []; S.dirty = false; S.source = null; S.password = null; S.outline = null; S.outlineDirty = false;
   AN.resetHistory(); AN.deselect(false);
   await idbDel('session'); await idbDel('base');
   showDoc();
@@ -476,12 +485,14 @@ async function openSettings() {
   const penOnly = el('input', { type: 'checkbox', checked: CFG.penOnly });
   const autoDrive = el('input', { type: 'checkbox', checked: autoOn() });
   const autoHide = el('input', { type: 'checkbox', checked: autoHideOn() });
+  const autoBm = el('input', { type: 'checkbox', checked: autoBmOn() });
   const signed = DR.isSignedIn();
   const body = el('div', { class: 'settings' },
     el('label', { class: 'field' }, el('span', {}, '주석 작성자 이름'), author),
     el('label', { class: 'check' }, penOnly, ' 그리기 도구는 스타일러스로만 (손가락은 스크롤)'),
     el('label', { class: 'check', style: { marginTop: '8px' } }, autoDrive, ' 드라이브 파일은 변경 후 자동 저장'),
     el('label', { class: 'check', style: { marginTop: '8px' } }, autoHide, ' 스크롤하면 아래 도구 막대 자동 숨김'),
+    el('label', { class: 'check', style: { marginTop: '8px' } }, autoBm, ' 책갈피 없는 PDF는 열 때 자동으로 만들기'),
     el('div', { class: 'field' }, el('span', {}, '구글 드라이브'),
       el('div', { class: 'row gap' },
         el('button', { class: 'btn small', onclick: () => DR.setupGuide() }, DR.isConfigured() ? '클라이언트 ID 변경' : '연결 설정'),
@@ -496,6 +507,7 @@ async function openSettings() {
   CFG.penOnly = penOnly.checked; saveCfg();
   localStorage.setItem('autoDrive', autoDrive.checked ? '1' : '0');
   localStorage.setItem('autoHideToolbar', autoHide.checked ? '1' : '0');
+  localStorage.setItem('autoBookmarks', autoBm.checked ? '1' : '0');
   if (!autoHide.checked) setToolbarHidden(false);
   renderToolOptions();
 }
@@ -519,12 +531,7 @@ async function renderPanel() {
   const body = $('#panelBody');
   if (!S.pdfDoc) { body.replaceChildren(el('div', { class: 'muted pad' }, '열린 문서가 없어요')); return; }
   if (panelTab === 'outline') {
-    const outline = await VW.getOutline();
-    if (!outline.length) { body.replaceChildren(el('div', { class: 'muted pad' }, '이 문서에는 목차가 없어요')); return; }
-    const build = (items, depth) => el('ul', { class: 'outline' }, items.map((it) => el('li', {},
-      el('button', { class: 'ol-item', style: { paddingLeft: 12 + depth * 14 + 'px' }, onclick: () => { if (it.dest) VW.goToDest(it.dest); else if (it.url) window.open(it.url, '_blank'); if (narrow()) togglePanel(false); } }, it.title),
-      it.items?.length ? build(it.items, depth + 1) : null)));
-    body.replaceChildren(build(outline, 0));
+    renderBookmarks(body);
   } else {
     const all = AN.allAnnotations();
     if (!all.length) { body.replaceChildren(el('div', { class: 'muted pad' }, '아직 주석이 없어요. 아래 도구로 하이라이트·메모를 남겨 보세요.')); return; }
@@ -547,6 +554,105 @@ async function renderPanel() {
     body.replaceChildren(list);
   }
 }
+
+// ---------------- bookmarks ----------------
+const autoBmOn = () => localStorage.getItem('autoBookmarks') !== '0';
+let bmLoading = false;
+async function loadBookmarks(doc) {
+  if (S.outlineDirty && S.outline) return;
+  bmLoading = true;
+  S.outline = null; S.outlineAuto = false;
+  if (panelOpen && panelTab === 'outline') renderPanel();
+  let list = await OL.readOutline(doc);
+  if (S.pdfDoc !== doc) return;
+  if (!list.length && autoBmOn() && doc.numPages <= 400) {
+    try { list = await OL.autoOutline(doc); S.outlineAuto = list.length > 0; } catch (e) { console.warn(e); list = []; }
+    if (S.pdfDoc !== doc) return;
+  }
+  S.outline = list;
+  bmLoading = false;
+  if (panelOpen && panelTab === 'outline') renderPanel();
+}
+on('outline', () => { persistState(); if (panelOpen && panelTab === 'outline') renderPanel(); });
+
+function goBookmark(it) {
+  if (it.top != null) VW.scrollToPoint(it.page, null, it.top); else VW.goToPage(it.page + 1);
+  if (narrow()) togglePanel(false);
+}
+function visibleTop(pageIdx) {
+  const pv = VW.viewer.getPageView(pageIdx);
+  if (!pv?.viewport) return null;
+  const off = container.scrollTop - pv.div.offsetTop;
+  return off > 0 ? Math.round(pv.viewport.convertToPdfPoint(0, off)[1]) : null;
+}
+async function addBookmark() {
+  if (!S.pdfDoc) return;
+  const page = VW.viewer.currentPageNumber - 1;
+  let guess = '';
+  try { const tc = await (await S.pdfDoc.getPage(page + 1)).getTextContent(); guess = tc.items.map((i) => i.str).join(' ').replace(/\s+/g, ' ').trim().slice(0, 40); } catch { /* */ }
+  const title = await promptDialog(`${page + 1}쪽에 책갈피 추가`, guess || `${page + 1}쪽`, { placeholder: '책갈피 이름' });
+  if (!title || !title.trim()) return;
+  const list = S.outline || [];
+  let at = list.length, level = 0;
+  for (let i = 0; i < list.length; i++) if (list[i].page <= page) { at = i + 1; level = list[i].level; } else break;
+  if (at === 0) level = 0;
+  list.splice(at, 0, { title: title.trim(), page, top: visibleTop(page), level });
+  S.outline = OL.normalizeLevels(list);
+  OL.markOutlineChanged();
+  toast('책갈피를 추가했어요');
+}
+async function autoBookmarks() {
+  if (!S.pdfDoc) return;
+  if (S.outline?.length && !(await confirmDialog('지금 책갈피를 지우고 자동으로 새로 만들까요?', '새로 만들기'))) return;
+  const b = busy('제목을 찾는 중…');
+  let list;
+  try { list = await OL.autoOutline(S.pdfDoc, (d, t) => b.set(`제목을 찾는 중… ${d}/${t}쪽`)); }
+  finally { b.close(); }
+  if (!list.length) {
+    if (!(await confirmDialog('제목으로 보이는 줄을 찾지 못했어요. 쪽마다 책갈피를 만들까요?', '쪽마다 만들기'))) return;
+    list = await OL.pageOutline(S.pdfDoc);
+  }
+  S.prevOutline = S.outline;
+  S.outline = list;
+  OL.markOutlineChanged();
+  toast(`책갈피 ${list.length}개를 만들었어요`);
+}
+function bookmarkMenu(i, anchor) {
+  document.querySelector('.bm-menu')?.remove();
+  const list = S.outline;
+  const it = list[i];
+  const act = (fn) => () => { menu.remove(); fn(); OL.normalizeLevels(list); OL.markOutlineChanged(); };
+  const menu = el('div', { class: 'ctx-menu bm-menu' }, el('div', { class: 'bm-menu-list' },
+    el('button', { class: 'menu-item', onclick: async () => { menu.remove(); const v = await promptDialog('책갈피 이름', it.title); if (v && v.trim()) { it.title = v.trim(); OL.markOutlineChanged(); } } }, '이름 바꾸기'),
+    el('button', { class: 'menu-item', onclick: act(() => { it.page = VW.viewer.currentPageNumber - 1; it.top = visibleTop(it.page); }) }, '지금 보는 위치로 바꾸기'),
+    el('button', { class: 'menu-item', disabled: i === 0, onclick: act(() => { it.level += 1; }) }, '하위로 (들여쓰기)'),
+    el('button', { class: 'menu-item', disabled: it.level === 0, onclick: act(() => { it.level = Math.max(0, it.level - 1); }) }, '상위로 (내어쓰기)'),
+    el('button', { class: 'menu-item', disabled: i === 0, onclick: act(() => { [list[i - 1], list[i]] = [list[i], list[i - 1]]; }) }, '위로 이동'),
+    el('button', { class: 'menu-item', disabled: i === list.length - 1, onclick: act(() => { [list[i + 1], list[i]] = [list[i], list[i + 1]]; }) }, '아래로 이동'),
+    el('button', { class: 'menu-item danger', onclick: act(() => { list.splice(i, 1); }) }, '삭제')));
+  document.body.append(menu);
+  const r = anchor.getBoundingClientRect();
+  menu.style.left = Math.min(r.left, innerWidth - 200) + 'px';
+  menu.style.top = Math.min(r.bottom + 4, innerHeight - menu.offsetHeight - 8) + 'px';
+  setTimeout(() => document.addEventListener('pointerdown', function off(e) { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('pointerdown', off, true); } }, true), 0);
+}
+function renderBookmarks(body) {
+  const list = S.outline;
+  const tools = el('div', { class: 'bm-tools' },
+    el('button', { class: 'btn small', onclick: addBookmark }, '+ 지금 쪽 추가'),
+    el('button', { class: 'btn small', onclick: autoBookmarks }, '자동 생성'),
+    S.prevOutline !== undefined ? el('button', { class: 'btn small', onclick: () => { S.outline = S.prevOutline || []; S.prevOutline = undefined; OL.markOutlineChanged(); } }, '되돌리기') : null);
+  if (list == null) { body.replaceChildren(tools, el('div', { class: 'muted pad' }, bmLoading ? '책갈피를 불러오는 중…' : '')); return; }
+  const note = S.outlineAuto && !S.outlineDirty ? el('div', { class: 'bm-note' }, '원본에 책갈피가 없어서 제목을 찾아 자동으로 만들었어요. 저장하면 PDF에 함께 들어가요.') : null;
+  if (!list.length) { body.replaceChildren(tools, el('div', { class: 'muted pad' }, '책갈피가 없어요. "자동 생성"을 누르면 문서 제목을 찾아 만들어 줘요.')); return; }
+  const cur = VW.viewer.currentPageNumber - 1;
+  const rows = list.map((it, i) => el('div', { class: `bm-row ${it.page === cur ? 'cur' : ''}`, style: { paddingLeft: 8 + it.level * 16 + 'px' } },
+    el('button', { class: `bm-title lv${Math.min(it.level, 2)}`, title: it.title, onclick: () => goBookmark(it) }, it.title),
+    el('span', { class: 'bm-page' }, String(it.page + 1)),
+    el('button', { class: 'icon dark bm-more', title: '편집', html: icon('more'), onclick: (e) => bookmarkMenu(i, e.currentTarget) })));
+  body.replaceChildren(tools, note, el('div', { class: 'bm-list' }, rows));
+}
+
 async function copyAllComments() {
   const lines = [`[${S.fileName}] 주석 목록`];
   for (const { p, a } of AN.allAnnotations()) {
@@ -594,7 +700,7 @@ $('#zoomVal').onclick = () => VW.setScaleValue(VW.viewer.currentScaleValue === '
 on('scale', (s) => ($('#zoomVal').textContent = Math.round(s * 100) + '%'));
 const updatePageInd = () => { if (S.pdfDoc) $('#pageInd').textContent = `${VW.viewer.currentPageNumber} / ${S.pdfDoc.numPages}`; };
 on('page', updatePageInd);
-on('docloaded', () => { if (!S.dirty) setStatus(''); updatePageInd(); $('#zoomVal').textContent = Math.round(VW.viewer.currentScale * 100) + '%'; });
+on('docloaded', (doc) => { loadBookmarks(doc); if (!S.dirty) setStatus(''); updatePageInd(); $('#zoomVal').textContent = Math.round(VW.viewer.currentScale * 100) + '%'; });
 $('#pageInd').onclick = async () => {
   const v = await promptDialog('이동할 페이지', String(VW.viewer.currentPageNumber), { type: 'number' });
   if (v) VW.goToPage(parseInt(v, 10));
@@ -669,10 +775,11 @@ const persistState = debounce(() => {
   idbSet('session', {
     name: S.fileName, annots: S.annots, images: S.images, source: S.source, password: S.password,
     dirty: S.dirty, page: VW.viewer.currentPageNumber, ver: S.baseVer, t: Date.now(),
+    outline: S.outlineDirty ? S.outline : null, outlineDirty: !!S.outlineDirty,
   }).catch((e) => console.warn('persist', e));
 }, 700);
 on('changed', () => { S.rev++; updateTitle(); persistState(); refreshPanel(); scheduleAutoSave(); });
-on('page', () => persistState());
+on('page', () => { persistState(); if (panelOpen && panelTab === 'outline' && S.outline?.length) renderPanel(); });
 
 async function restoreSession() {
   const [sess, base] = await Promise.all([idbGet('session'), idbGet('base')]);
@@ -682,6 +789,7 @@ async function restoreSession() {
     S.baseBytes = base.bytes; S.baseVer = base.ver;
     S.annots = sess.annots || []; S.images = sess.images || {};
     S.fileName = sess.name; S.source = sess.source; S.password = sess.password || null;
+    S.outlineDirty = !!sess.outlineDirty; S.outline = sess.outlineDirty ? sess.outline : null; S.prevOutline = undefined;
     await VW.openDocument(S.baseBytes);
     while (S.annots.length < S.pdfDoc.numPages) S.annots.push([]);
     S.dirty = !!sess.dirty;

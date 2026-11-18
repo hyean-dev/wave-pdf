@@ -494,8 +494,47 @@ function collectFormChars(doc, chars) {
   }
 }
 
+
+/** Replace the document outline (bookmarks) with a flat list [{title,page,top,level}] */
+function writeOutline(doc, flat) {
+  const { PDFName, PDFHexString, PDFNumber, PDFNull } = L();
+  const ctx = doc.context, pages = doc.getPages();
+  const catalog = doc.catalog;
+  if (!flat || !flat.length) { catalog.delete(PDFName.of('Outlines')); return; }
+  const root = { children: [] };
+  const stack = [{ level: -1, node: root }];
+  for (const it of flat) {
+    while (stack.length > 1 && stack[stack.length - 1].level >= it.level) stack.pop();
+    const node = { ...it, children: [] };
+    stack[stack.length - 1].node.children.push(node);
+    stack.push({ level: it.level, node });
+  }
+  const countAll = (nodes) => nodes.reduce((n, x) => n + 1 + countAll(x.children), 0);
+  const outlinesRef = ctx.nextRef();
+  function build(nodes, parentRef) {
+    const refs = nodes.map(() => ctx.nextRef());
+    nodes.forEach((nd, i) => {
+      const page = pages[Math.max(0, Math.min(pages.length - 1, nd.page))];
+      const dest = [page.ref, PDFName.of('XYZ'), PDFNull, nd.top == null ? PDFNull : PDFNumber.of(nd.top), PDFNull];
+      const d = { Title: PDFHexString.fromText(nd.title || ''), Parent: parentRef, Dest: ctx.obj(dest) };
+      if (i > 0) d.Prev = refs[i - 1];
+      if (i < refs.length - 1) d.Next = refs[i + 1];
+      if (nd.children.length) {
+        const sub = build(nd.children, refs[i]);
+        d.First = sub[0]; d.Last = sub[1]; d.Count = countAll(nd.children);
+      }
+      ctx.assign(refs[i], ctx.obj(d));
+    });
+    return [refs[0], refs[refs.length - 1]];
+  }
+  const [first, last] = build(root.children, outlinesRef);
+  ctx.assign(outlinesRef, ctx.obj({ Type: 'Outlines', First: first, Last: last, Count: countAll(root.children) }));
+  catalog.set(PDFName.of('Outlines'), outlinesRef);
+  catalog.set(PDFName.of('PageMode'), PDFName.of('UseOutlines'));
+}
+
 /** Bake annotations (+form values) into the base PDF */
-export async function buildPdf({ base, annots, images = {}, forms = [] }) {
+export async function buildPdf({ base, annots, images = {}, forms = [], outline = null }) {
   const { PDFDocument } = L();
   const doc = await PDFDocument.load(base, { updateMetadata: false });
   doc.registerFontkit(window.fontkit);
@@ -520,6 +559,7 @@ export async function buildPdf({ base, annots, images = {}, forms = [] }) {
       catch (e) { console.error('annotation save failed', a, e); }
     }
   }
+  if (outline) { try { writeOutline(doc, outline); } catch (e) { console.error('outline save failed', e); } }
   return doc.save({ updateFieldAppearances: false });
 }
 

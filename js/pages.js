@@ -153,7 +153,7 @@ export async function openPageEditor(hooks, { mergeNow = false } = {}) {
         const forms = await hooks.collectForms();
         const base0 = forms.length ? await buildPdf({ base: S.baseBytes, annots: [], forms }) : S.baseBytes;
         const newBase = await applyPageEdits(base0, items, merged);
-        await hooks.commitBase(newBase, annotsFor(items));
+        await hooks.commitBase(newBase, annotsFor(items), items);
       } catch (e) { b.close(); toast('적용 실패: ' + e.message); console.error(e); return; }
       b.close();
     }
