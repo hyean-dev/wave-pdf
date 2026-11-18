@@ -14,6 +14,12 @@ export const typeLabel = (a) => (a.type === 'ink' && a.marker ? '형광펜' : TY
 const undoStack = [], redoStack = [];
 const snap = () => JSON.stringify(S.annots);
 export function resetHistory() { undoStack.length = 0; redoStack.length = 0; emitHistory(); }
+export function getHistory() { return { undo: [...undoStack], redo: [...redoStack] }; }
+export function setHistory(h) {
+  undoStack.length = 0; redoStack.length = 0;
+  if (h) { undoStack.push(...h.undo); redoStack.push(...h.redo); }
+  emitHistory();
+}
 function emitHistory() { emit('history', { canUndo: undoStack.length > 0, canRedo: redoStack.length > 0 }); }
 function pushUndo() { undoStack.push(snap()); if (undoStack.length > 150) undoStack.shift(); redoStack.length = 0; }
 function changed(pages) {
@@ -792,6 +798,7 @@ function placeEditor() {
   ta.style.height = ta.scrollHeight + 2 + 'px';
 }
 export function isEditingText() { return !!editing; }
+export function endEdit() { if (editing) finishEdit(); }
 export function editStyle(patch) {
   if (!editing) return false;
   Object.assign(editing.style, patch);

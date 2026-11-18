@@ -7,10 +7,10 @@ import { prepare, buildPdf, qpdf } from './pdfio.js';
 import * as DR from './drive.js';
 import { openPageEditor } from './pages.js';
 import { pickSignature } from './sign.js';
-import { initAI, toggleAI } from './ai.js';
+import { initAI, toggleAI, aiBusy } from './ai.js';
 import * as OL from './outline.js';
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.13.0';
 const container = $('#viewerContainer');
 
 // ---------------- icons ----------------
@@ -139,11 +139,22 @@ $('#btnRedo').onclick = () => AN.redo();
 // ---------------- open documents ----------------
 const askPassword = (msg) => promptDialog(msg, '', { type: 'password', placeholder: 'PDF 암호' });
 
-async function openBytes(bytes, name, source) {
-  if (S.dirty && S.pdfDoc && !(await confirmDialog('저장하지 않은 변경사항이 있어요. 새 문서를 열까요?', '열기'))) return false;
-  let b = busy('여는 중…');
+/** where to open another PDF: 'tab' | 'window' | null (cancelled) */
+async function openTarget(force) {
+  if (!S.pdfDoc) return 'here';
+  if (force) return force;
+  const mode = openMode();
+  if (mode !== 'ask') return mode;
+  return modal({ title: 'PDF를 어디에 열까요?', buttons: [{ label: '취소', value: null }, { label: '새 창', value: 'window' }, { label: '새 탭', value: 'tab', primary: true }] });
+}
+async function openBytes(bytes, name, source, { target: force } = {}) {
+  const target = await openTarget(force);
+  if (!target) return false;
+  if (target === 'window') return openInWindow({ kind: 'bytes', bytes, name, source });
+  let b = busy('여는 중…'), newTab = null;
   try {
     const prep = await prepare(bytes, async (m) => { b.close(); const v = await askPassword(m); b = busy('여는 중…'); return v; });
+    newTab = await beginTab();
     AN.setTool('hand'); selectTool('hand');
     S.baseBytes = prep.base;
     S.annots = prep.annots;
@@ -163,9 +174,189 @@ async function openBytes(bytes, name, source) {
     if (prep.encrypted) toast(prep.password ? '암호를 풀었어요. 저장할 때 같은 암호로 다시 잠가요' : '보안 설정을 해제한 사본으로 열었어요');
     return true;
   } catch (e) {
+    if (newTab) await dropTab(newTab);
     if (e.message !== 'CANCELLED') { console.error(e); modal({ title: 'PDF를 열 수 없어요', body: el('div', { class: 'muted' }, e.message || String(e)) }); }
     return false;
   } finally { b.close(); }
+}
+
+// ---------------- tabs ----------------
+const DOC_KEYS = ['pdfDoc', 'baseBytes', 'baseVer', 'fileName', 'source', 'annots', 'images', 'password', 'dirty', 'outline', 'outlineDirty', 'outlineAuto', 'outlineDoc', 'prevOutline', 'rev'];
+const emptyDoc = () => ({ pdfDoc: null, baseBytes: null, baseVer: 0, fileName: '', source: null, annots: [], images: {}, password: null, dirty: false, outline: null, outlineDirty: false, outlineAuto: false, outlineDoc: null, prevOutline: undefined, rev: 0 });
+const tabs = [];
+let activeTab = null, tabSeq = 0, switching = false;
+const openMode = () => localStorage.getItem('openMode') || 'tab';
+const pickDoc = (src) => Object.fromEntries(DOC_KEYS.map((k) => [k, src[k]]));
+const stOf = (t) => (t === activeTab ? S : t.st);
+/** save the active tab's document state out of S */
+function stashActive() {
+  if (!activeTab) return;
+  AN.endEdit(); AN.deselect(false);
+  activeTab.st = pickDoc(S);
+  activeTab.hist = AN.getHistory();
+  activeTab.view = S.pdfDoc ? VW.getView() : null;
+  clearTimeout(autoTimer);
+  if (S.dirty && autoOn() && isDriveDoc()) bgAutoSave(activeTab);
+}
+/** make a fresh active tab (stashing the current one). Returns the new tab. */
+async function beginTab() {
+  if (activeTab && !S.pdfDoc) return null; // reuse the empty tab
+  stashActive();
+  const t = { id: ++tabSeq };
+  tabs.splice(activeTab ? tabs.indexOf(activeTab) + 1 : tabs.length, 0, t);
+  const prev = activeTab;
+  activeTab = t; t.prev = prev;
+  Object.assign(S, emptyDoc());
+  AN.resetHistory();
+  if (VW.viewer.pdfDocument) { VW.viewer.setDocument(null); VW.linkService.setDocument(null, null); }
+  VW.clearFind?.();
+  return t;
+}
+/** undo beginTab after a failed open */
+async function dropTab(t) {
+  const prev = t.prev;
+  tabs.splice(tabs.indexOf(t), 1);
+  if (S.pdfDoc) S.pdfDoc.destroy().catch(() => {});
+  activeTab = null;
+  Object.assign(S, emptyDoc());
+  if (prev && tabs.includes(prev)) await activate(prev);
+  else { showDoc(); renderTabs(); }
+}
+async function activate(t) {
+  activeTab = t;
+  Object.assign(S, t.st);
+  AN.setHistory(t.hist);
+  setStatus('');
+  closeSearch?.();
+  await VW.attachDocument(S.pdfDoc, t.view);
+  showDoc();
+  persistBase(); persistState();
+  scheduleAutoSave();
+}
+async function switchTab(t) {
+  if (!t || t === activeTab || switching) return;
+  if (document.querySelector('.busy')) return;
+  if (aiBusy()) return toast('Claude 답변이 끝난 뒤에 탭을 바꿀 수 있어요');
+  switching = true;
+  try { stashActive(); await activate(t); }
+  catch (e) { console.error(e); toast('탭 전환 실패: ' + e.message); }
+  finally { switching = false; }
+}
+function cycleTab(d) {
+  if (tabs.length < 2) return;
+  const i = tabs.indexOf(activeTab);
+  switchTab(tabs[(i + d + tabs.length) % tabs.length]);
+}
+async function closeTab(t, { force = false } = {}) {
+  if (!t || switching) return false;
+  const st = stOf(t);
+  if (!force && st.dirty && !(await confirmDialog(`"${st.fileName}"에 저장하지 않은 변경사항이 있어요. 닫을까요?`, '닫기', true))) return false;
+  const i = tabs.indexOf(t);
+  if (i < 0) return false;
+  tabs.splice(i, 1);
+  if (t !== activeTab) { st.pdfDoc?.destroy().catch(() => {}); renderTabs(); return true; }
+  AN.endEdit(); AN.deselect(false);
+  clearTimeout(autoTimer);
+  VW.closeDocument();
+  activeTab = null;
+  Object.assign(S, emptyDoc());
+  AN.resetHistory();
+  const next = tabs[Math.min(i, tabs.length - 1)];
+  if (next) { switching = true; try { await activate(next); } finally { switching = false; } return true; }
+  await idbDel('session'); await idbDel('base');
+  showDoc(); renderTabs();
+  checkResume();
+  return true;
+}
+async function bgAutoSave(t) {
+  const st = t.st;
+  if (!DR.isSignedIn()) return;
+  const rev = st.rev;
+  try {
+    const bytes = await exportBytes({ quiet: true, st });
+    await DR.updateFile(st.source.driveId, bytes);
+    if (!tabs.includes(t)) return;
+    const cur = stOf(t);
+    if (cur.rev === rev) { cur.dirty = false; if (t === activeTab) { updateTitle(); persistState(); } else renderTabs(); }
+  } catch (e) { console.warn('bg autosave', e); toast(`"${st.fileName}" 자동 저장 실패 — 그 탭에서 저장 버튼을 눌러주세요`); }
+}
+function renderTabs() {
+  const bar = $('#tabBar');
+  const show = tabs.length > 1;
+  bar.hidden = !show;
+  document.body.classList.toggle('has-tabs', show);
+  if (!show) { bar.replaceChildren(); return; }
+  const items = tabs.map((t) => {
+    const st = stOf(t);
+    const x = el('button', { class: 'tab-x', title: '탭 닫기', html: icon('x'), onclick: (e) => { e.stopPropagation(); closeTab(t); } });
+    const b = el('div', { class: `tab ${t === activeTab ? 'on' : ''}`, title: st.fileName, role: 'tab' },
+      st.dirty ? el('span', { class: 'tab-dot' }) : null, el('span', { class: 'tab-name' }, st.fileName || '문서'), x);
+    b.addEventListener('click', () => switchTab(t));
+    b.addEventListener('auxclick', (e) => { if (e.button === 1) { e.preventDefault(); closeTab(t); } });
+    b.addEventListener('contextmenu', (e) => { e.preventDefault(); tabMenu(t, b); });
+    let lp = null;
+    b.addEventListener('pointerdown', (e) => { if (e.pointerType !== 'mouse') lp = setTimeout(() => { lp = 'done'; tabMenu(t, b); }, 550); });
+    for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) b.addEventListener(ev, () => { if (lp !== 'done') clearTimeout(lp); lp = null; });
+    return b;
+  });
+  const add = el('button', { class: 'tab-add', title: '다른 PDF 열기', html: icon('plus'), onclick: openAnother });
+  bar.replaceChildren(...items, add);
+  bar.querySelector('.tab.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+async function openAnother() {
+  const where = await modal({ title: '다른 PDF 열기', buttons: [{ label: '취소', value: null }, { label: '구글 드라이브', value: 'drive' }, { label: '내 기기', value: 'local', primary: true }] });
+  if (where === 'local') openLocal();
+  if (where === 'drive') openDrive();
+}
+function tabMenu(t, anchor) {
+  document.querySelector('.bm-menu')?.remove();
+  const go = (fn) => () => { menu.remove(); fn(); };
+  const menu = el('div', { class: 'ctx-menu bm-menu' }, el('div', { class: 'bm-menu-list' },
+    el('button', { class: 'menu-item', onclick: go(() => moveTabToWindow(t)) }, '새 창으로 옮기기'),
+    el('button', { class: 'menu-item', onclick: go(() => closeTab(t)) }, '이 탭 닫기'),
+    el('button', { class: 'menu-item', disabled: tabs.length < 2, onclick: go(async () => { for (const o of [...tabs]) if (o !== t && !(await closeTab(o))) break; }) }, '다른 탭 모두 닫기')));
+  document.body.append(menu);
+  const r = anchor.getBoundingClientRect();
+  menu.style.left = Math.min(r.left, innerWidth - 200) + 'px';
+  menu.style.top = Math.min(r.bottom + 4, innerHeight - menu.offsetHeight - 8) + 'px';
+  setTimeout(() => document.addEventListener('pointerdown', function off(e) { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('pointerdown', off, true); } }, true), 0);
+}
+
+// ---------------- new window ----------------
+/** hand a file (or a whole tab's state) to a new app window through IndexedDB */
+async function openInWindow(payload) {
+  const id = Math.random().toString(36).slice(2, 10);
+  await idbSet('xfer:' + id, payload);
+  const url = `${location.pathname}?xfer=${id}`;
+  let w = window.open(url, '_blank');
+  if (!w) {
+    // popup blocked (no recent click) → ask for a click
+    const go = await modal({ title: '새 창 열기', body: el('div', { class: 'muted' }, `"${payload.name || payload.st?.fileName || 'PDF'}"을(를) 새 창에서 열어요.`), buttons: [{ label: '취소', value: false }, { label: '새 창 열기', value: true, primary: true }] });
+    if (go) w = window.open(url, '_blank');
+    if (!w) { idbDel('xfer:' + id); if (go) toast('브라우저가 새 창을 막았어요. 팝업을 허용해 주세요'); return false; }
+  }
+  return true;
+}
+async function moveTabToWindow(t) {
+  if (t === activeTab) stashActive();
+  const st = t.st;
+  if (st.dirty && st.pdfDoc?.annotationStorage?.serializable?.map?.size) toast('양식에 입력한 값은 새 창으로 옮겨지지 않아요. 먼저 저장하세요');
+  const ok = await openInWindow({ kind: 'state', st: { ...pickDoc(st), pdfDoc: null, outlineDoc: null }, page: t.view?.page || 1 });
+  if (ok) await closeTab(t, { force: true });
+}
+/** open a document state (from another window) as a tab */
+async function openState(st, page) {
+  const b = busy('여는 중…');
+  try {
+    await beginTab();
+    Object.assign(S, emptyDoc(), st, { pdfDoc: null });
+    await VW.openDocument(S.baseBytes);
+    while (S.annots.length < S.pdfDoc.numPages) S.annots.push([]);
+    if (page) VW.goToPage(page);
+    showDoc(); persistBase(); persistState();
+    if (S.dirty) emit('changed', {});
+  } catch (e) { toast('열지 못했어요: ' + e.message); }
+  finally { b.close(); }
 }
 
 function showDoc() {
@@ -177,6 +368,7 @@ function showDoc() {
   if (panelOpen) renderPanel();
 }
 function updateTitle() {
+  renderTabs();
   $('#docTitle').textContent = S.pdfDoc ? S.fileName : 'Wave PDF';
   $('#dirtyDot').hidden = !S.dirty;
   document.title = S.pdfDoc ? `${S.dirty ? '• ' : ''}${S.fileName} - Wave PDF` : 'Wave PDF';
@@ -203,25 +395,31 @@ async function localFileAsPdf(f) {
     return null;
   } finally { b.close(); }
 }
-async function openLocalFile(f, handle) {
+async function openLocalFile(f, handle, opts) {
   const r = await localFileAsPdf(f);
   if (!r) return;
-  return openBytes(r.bytes, r.name, r.pdf && handle ? { type: 'local', handle } : { type: 'local' });
+  return openBytes(r.bytes, r.name, r.pdf && handle ? { type: 'local', handle } : { type: 'local' }, opts);
+}
+/** several files: the first follows the open setting, the rest go to the same place */
+async function openLocalFiles(list) {
+  let target;
+  for (const { file, handle } of list) {
+    if (target === undefined && S.pdfDoc) { target = await openTarget(); if (!target) return; }
+    await openLocalFile(file, handle, target ? { target } : undefined);
+    if (target === undefined) target = openMode() === 'window' ? 'window' : 'tab';
+  }
 }
 async function openLocal() {
   if (window.showOpenFilePicker) {
     try {
-      const [h] = await window.showOpenFilePicker({ types: [{ description: 'PDF', accept: { 'application/pdf': ['.pdf'] } }], excludeAcceptAllOption: true });
-      const f = await h.getFile();
-      return openLocalFile(f, h);
+      const hs = await window.showOpenFilePicker({ multiple: true, types: [{ description: 'PDF', accept: { 'application/pdf': ['.pdf'] } }], excludeAcceptAllOption: true });
+      return openLocalFiles(await Promise.all(hs.map(async (h) => ({ file: await h.getFile(), handle: h }))));
     } catch (e) { if (e.name !== 'AbortError') toast(e.message); return; }
   }
   const input = $('#fileInput');
   input.value = '';
-  input.onchange = async () => {
-    const f = input.files[0];
-    if (f) openLocalFile(f);
-  };
+  input.multiple = true;
+  input.onchange = () => { if (input.files.length) openLocalFiles([...input.files].map((file) => ({ file }))); };
   input.click();
 }
 function pickLocalBytes() {
@@ -273,13 +471,13 @@ async function pickPdfAny() {
 }
 
 // ---------------- save ----------------
-async function exportBytes({ quiet = false } = {}) {
+async function exportBytes({ quiet = false, st = pickDoc(S) } = {}) {
   const b = quiet ? { close() {} } : busy('PDF 만드는 중…');
   try {
-    const forms = await VW.collectFormValues();
-    const outline = S.outline && (S.outlineDirty || S.outlineAuto) ? S.outline : null;
-    let bytes = await buildPdf({ base: S.baseBytes, annots: S.annots, images: S.images, forms, outline });
-    if (S.password) bytes = await qpdf(bytes, ['--encrypt', S.password, S.password, '256', '--']);
+    const forms = await VW.collectFormValues(st.pdfDoc);
+    const outline = st.outline && (st.outlineDirty || st.outlineAuto) ? st.outline : null;
+    let bytes = await buildPdf({ base: st.baseBytes, annots: st.annots, images: st.images, forms, outline });
+    if (st.password) bytes = await qpdf(bytes, ['--encrypt', st.password, st.password, '256', '--']);
     return bytes;
   } finally { b.close(); }
 }
@@ -341,11 +539,12 @@ async function autoSave() {
   if (!isDriveDoc() || !S.dirty) return;
   if (!DR.isSignedIn()) { setStatus('로그인 필요 · 저장 버튼', true); return; }
   autoBusy = true;
-  const rev = S.rev;
+  const rev = S.rev, tab = activeTab, st = pickDoc(S);
   setStatus('저장 중…', true);
   try {
-    const bytes = await exportBytes({ quiet: true });
-    await DR.updateFile(S.source.driveId, bytes);
+    const bytes = await exportBytes({ quiet: true, st });
+    await DR.updateFile(st.source.driveId, bytes);
+    if (tab !== activeTab) { const cur = tabs.includes(tab) && stOf(tab); if (cur && cur.rev === rev) { cur.dirty = false; renderTabs(); } return; }
     if (S.rev === rev) { S.dirty = false; updateTitle(); persistState(); setStatus('드라이브에 저장됨'); }
     else scheduleAutoSave();
   } catch (e) {
@@ -461,7 +660,7 @@ function openMenu() {
     menuItem('lock', S.password ? '암호 변경/해제' : '암호 걸기', setPassword, { disabled: !has }),
     el('div', { class: 'menu-sep' }),
     menuItem('settings', '설정', openSettings),
-    has ? menuItem('x', '문서 닫기', closeDoc) : null);
+    has ? menuItem('x', tabs.length > 1 ? '이 탭 닫기' : '문서 닫기', closeDoc) : null);
   const back = el('div', { class: 'sheet-back', onpointerdown: (e) => { if (e.target === back) closeSheet(); } }, sheet);
   document.body.append(back);
   sheetEl = back;
@@ -473,15 +672,7 @@ async function setPassword() {
   S.dirty = true; emit('changed', {});
   toast(v ? '저장할 때 암호가 걸려요' : '암호를 해제했어요 (저장 시 적용)');
 }
-async function closeDoc() {
-  if (S.dirty && !(await confirmDialog('저장하지 않은 변경사항이 있어요. 닫을까요?', '닫기', true))) return;
-  VW.closeDocument();
-  S.baseBytes = null; S.annots = []; S.dirty = false; S.source = null; S.password = null; S.outline = null; S.outlineDirty = false;
-  AN.resetHistory(); AN.deselect(false);
-  await idbDel('session'); await idbDel('base');
-  showDoc();
-  checkResume();
-}
+async function closeDoc() { return closeTab(activeTab); }
 
 async function openSettings() {
   const author = el('input', { class: 'input', value: S.author });
@@ -489,9 +680,12 @@ async function openSettings() {
   const autoDrive = el('input', { type: 'checkbox', checked: autoOn() });
   const autoHide = el('input', { type: 'checkbox', checked: autoHideOn() });
   const autoBm = el('input', { type: 'checkbox', checked: autoBmOn() });
+  const om = el('select', { class: 'input' },
+    ...[['tab', '새 탭으로 열기'], ['window', '새 창으로 열기'], ['ask', '열 때마다 묻기']].map(([v, l]) => el('option', { value: v, selected: openMode() === v }, l)));
   const signed = DR.isSignedIn();
   const body = el('div', { class: 'settings' },
     el('label', { class: 'field' }, el('span', {}, '주석 작성자 이름'), author),
+    el('label', { class: 'field' }, el('span', {}, 'PDF를 하나 더 열 때'), om),
     el('label', { class: 'check' }, penOnly, ' 그리기 도구는 스타일러스로만 (손가락은 스크롤)'),
     el('label', { class: 'check', style: { marginTop: '8px' } }, autoDrive, ' 드라이브 파일은 변경 후 자동 저장'),
     el('label', { class: 'check', style: { marginTop: '8px' } }, autoHide, ' 스크롤하면 아래 도구 막대 자동 숨김'),
@@ -511,6 +705,7 @@ async function openSettings() {
   localStorage.setItem('autoDrive', autoDrive.checked ? '1' : '0');
   localStorage.setItem('autoHideToolbar', autoHide.checked ? '1' : '0');
   localStorage.setItem('autoBookmarks', autoBm.checked ? '1' : '0');
+  localStorage.setItem('openMode', om.value);
   if (!autoHide.checked) setToolbarHidden(false);
   renderToolOptions();
 }
@@ -563,6 +758,7 @@ const autoBmOn = () => localStorage.getItem('autoBookmarks') !== '0';
 let bmLoading = false;
 async function loadBookmarks(doc) {
   if (S.outlineDirty && S.outline) return;
+  if (S.outline && S.outlineDoc === doc) return; // tab switch: already loaded
   bmLoading = true;
   S.outline = null; S.outlineAuto = false;
   if (panelOpen && panelTab === 'outline') renderPanel();
@@ -572,7 +768,7 @@ async function loadBookmarks(doc) {
     try { list = await OL.autoOutline(doc); S.outlineAuto = list.length > 0; } catch (e) { console.warn(e); list = []; }
     if (S.pdfDoc !== doc) return;
   }
-  S.outline = list;
+  S.outline = list; S.outlineDoc = doc;
   bmLoading = false;
   if (panelOpen && panelTab === 'outline') renderPanel();
 }
@@ -789,6 +985,7 @@ async function restoreSession() {
   if (!sess || !base || base.ver !== sess.ver) return false;
   const b = busy('이전 문서 복원 중…');
   try {
+    await beginTab();
     S.baseBytes = base.bytes; S.baseVer = base.ver;
     S.annots = sess.annots || []; S.images = sess.images || {};
     S.fileName = sess.name; S.source = sess.source; S.password = sess.password || null;
@@ -820,6 +1017,8 @@ document.addEventListener('keydown', (e) => {
   if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); save(); return; }
   if (mod && e.key.toLowerCase() === 'o') { e.preventDefault(); openLocal(); return; }
   if (mod && e.key.toLowerCase() === 'f') { e.preventDefault(); openSearch(); return; }
+  if (mod && e.key === 'Tab') { e.preventDefault(); cycleTab(e.shiftKey ? -1 : 1); return; }
+  if (mod && (e.key === 'PageDown' || e.key === 'PageUp')) { e.preventDefault(); cycleTab(e.key === 'PageDown' ? 1 : -1); return; }
   if (typing || document.querySelector('.modal-back')) return;
   if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); AN.undo(); return; }
   if (mod && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) { e.preventDefault(); AN.redo(); return; }
@@ -829,7 +1028,7 @@ document.addEventListener('keydown', (e) => {
   const map = { h: 'hand', t: 'text', y: 'highlight', u: 'underline', p: 'pen', m: 'marker', e: 'eraser', x: 'freetext', n: 'note' };
   if (!mod && !e.altKey && map[e.key] && S.pdfDoc) onToolClick(map[e.key]);
 });
-window.addEventListener('beforeunload', (e) => { if (S.dirty) { persistState.flush(); e.preventDefault(); e.returnValue = ''; } });
+window.addEventListener('beforeunload', (e) => { if (S.dirty || tabs.some((t) => stOf(t).dirty)) { persistState.flush(); e.preventDefault(); e.returnValue = ''; } });
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') persistState.flush(); });
 
 // ---------------- drag & drop ----------------
@@ -837,8 +1036,9 @@ window.addEventListener('dragover', (e) => { e.preventDefault(); });
 window.addEventListener('drop', async (e) => {
   e.preventDefault();
   const files = [...(e.dataTransfer?.files || [])];
-  const f = files.find(isPdfFile) || files[0];
-  if (f) openLocalFile(f);
+  const pdfs = files.filter(isPdfFile);
+  if (pdfs.length) openLocalFiles(pdfs.map((file) => ({ file })));
+  else if (files[0]) openLocalFile(files[0]);
 });
 
 // ---------------- startup ----------------
@@ -851,13 +1051,24 @@ if ('launchQueue' in window) {
   window.launchQueue.setConsumer(async (params) => {
     if (!params.files?.length) return;
     incoming = true;
-    const h = params.files[0];
-    const f = await h.getFile();
-    openBytes(new Uint8Array(await f.arrayBuffer()), f.name, { type: 'local', handle: h });
+    const list = await Promise.all(params.files.map(async (h) => ({ file: await h.getFile(), handle: h })));
+    openLocalFiles(list);
   });
 }
 (async () => {
   const qs = new URLSearchParams(location.search);
+  if (qs.has('xfer')) {
+    const key = 'xfer:' + qs.get('xfer');
+    history.replaceState(null, '', location.pathname);
+    const x = await idbGet(key);
+    await idbDel(key).catch(() => {});
+    if (x) {
+      incoming = true;
+      if (x.kind === 'state') await openState(x.st, x.page);
+      else await openBytes(x.bytes, x.name, x.source);
+      return;
+    }
+  }
   if (qs.has('shared')) {
     history.replaceState(null, '', location.pathname);
     try {
@@ -881,6 +1092,6 @@ if ('launchQueue' in window) {
 showDoc();
 
 // expose for debugging
-window.__wave = { S, VW, AN, openBytes };
+window.__wave = { S, VW, AN, openBytes, tabs, switchTab, closeTab, get activeTab() { return activeTab; } };
 window.__waveReady = true;
 void emit; void idbGet;

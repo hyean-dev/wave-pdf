@@ -31,7 +31,17 @@ let history = [];        // [{role, content}]
 let busy = false;
 let panel, list, input;
 
-on('docloaded', () => { ctx = null; history = []; if (list) renderEmpty(); });
+// chat is kept per document (tabs)
+const perDoc = new WeakMap();
+let curDoc = null;
+on('docloaded', (doc) => {
+  if (curDoc && curDoc !== doc) perDoc.set(curDoc, { ctx, history, nodes: list ? [...list.children] : [] });
+  curDoc = doc;
+  const s = perDoc.get(doc);
+  ctx = s?.ctx || null; history = s?.history || [];
+  if (list) { if (history.length && s.nodes.length) list.replaceChildren(...s.nodes); else renderEmpty(); }
+});
+export const aiBusy = () => busy;
 
 // ---------------- document context ----------------
 async function buildContext() {

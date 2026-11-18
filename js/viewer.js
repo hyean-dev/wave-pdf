@@ -72,9 +72,28 @@ export function closeDocument() {
   S.pdfDoc = null;
 }
 
+/** current view position (for tab switching) */
+export function getView() {
+  if (!viewer.pdfDocument) return null;
+  return { scale: viewer.currentScaleValue, page: viewer.currentPageNumber, top: container.scrollTop, left: container.scrollLeft };
+}
+/** show an already-loaded document (tab switch) and restore its view */
+export async function attachDocument(doc, view) {
+  const inited = new Promise((r) => eventBus.on('pagesinit', r, { once: true }));
+  viewer.setDocument(doc);
+  linkService.setDocument(doc, null);
+  await withTimeout(inited, 20000, '화면 준비가 끝나지 않았어요');
+  if (view) {
+    viewer.currentScaleValue = view.scale;
+    viewer.currentPageNumber = Math.min(view.page || 1, doc.numPages);
+    await new Promise((r) => requestAnimationFrame(r));
+    container.scrollTop = view.top; container.scrollLeft = view.left;
+  } else viewer.currentScaleValue = window.innerWidth < 900 ? 'page-width' : 'auto';
+  emit('docloaded', doc);
+}
+
 /** pdf.js form edits → [{name,type,exportValue,value}] */
-export async function collectFormValues() {
-  const doc = S.pdfDoc;
+export async function collectFormValues(doc = S.pdfDoc) {
   if (!doc) return [];
   const map = doc.annotationStorage.serializable?.map;
   if (!map || !map.size) return [];
