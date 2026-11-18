@@ -393,7 +393,7 @@ body.view-dark .tool.on .ico { background: rgba(108,180,255,.15); }
 body.view-dark .btn { background: #262e36; border-color: var(--line); color: var(--text); }
 body.view-dark .btn.primary { background: #2f6fae; border-color: #2f6fae; color: #fff; }
 body.view-dark .btn.danger { background: #c62828; border-color: #c62828; color: #fff; }
-body.view-dark .input, body.view-dark #searchInput, body.view-dark select, body.view-dark textarea, body.view-dark input:not([type=checkbox]):not([type=range]):not([type=color]) {
+body.view-dark .input, body.view-dark #searchInput, body.view-dark select, body.view-dark textarea:not(.ft-editor), body.view-dark input:not([type=checkbox]):not([type=range]):not([type=color]) {
   background: #12171c; color: var(--text); border-color: var(--line);
 }
 body.view-dark .ai-input:focus { background: #12171c; border-color: #6cb4ff; }
