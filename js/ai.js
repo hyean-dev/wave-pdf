@@ -68,7 +68,7 @@ async function buildContext() {
 }
 
 // ---------------- API ----------------
-async function callClaude(messages, { maxTokens = 4096, onText } = {}) {
+async function callClaude(messages, { maxTokens = 16000, onText, onThinking } = {}) {
   const key = getKey();
   if (!key) throw new Error('NO_KEY');
   let r;
@@ -95,7 +95,7 @@ async function callClaude(messages, { maxTokens = 4096, onText } = {}) {
   }
   const reader = r.body.getReader();
   const dec = new TextDecoder();
-  let buf = '', out = '';
+  let buf = '', out = '', stop = null, thought = 0;
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -107,9 +107,17 @@ async function callClaude(messages, { maxTokens = 4096, onText } = {}) {
       if (!line) continue;
       let d; try { d = JSON.parse(line.slice(5)); } catch { continue; }
       if (d.type === 'content_block_delta' && d.delta?.type === 'text_delta') { out += d.delta.text; onText?.(out); }
+      if (d.type === 'content_block_delta' && d.delta?.type === 'thinking_delta' && !out) { thought += (d.delta.thinking || '').length; onThinking?.(thought); }
+      if (d.type === 'message_delta' && d.delta?.stop_reason) stop = d.delta.stop_reason;
       if (d.type === 'error') throw new Error(d.error?.message || 'API 오류');
     }
   }
+  if (!out.trim()) {
+    if (stop === 'max_tokens') throw new Error('Claude가 생각하는 데 답변 분량을 다 써버렸어요. 질문을 조금 좁혀서 다시 물어봐 주세요.');
+    if (stop === 'refusal') throw new Error('Claude가 이 요청에는 답하지 않았어요. 표현을 바꿔 다시 물어봐 주세요.');
+    throw new Error(`빈 답변이 왔어요 (종료 사유: ${stop || '알 수 없음'}). 다시 시도해 주세요.`);
+  }
+  if (stop === 'max_tokens') out += '\n\n_(답변이 길어 여기서 잘렸어요. "이어서"라고 보내면 계속해요.)_';
   return out;
 }
 
@@ -197,7 +205,7 @@ export function initAI() {
       el('button', { class: 'icon dark', title: '닫기', html: icon('x'), onclick: () => toggleAI(false) })),
     el('div', { class: 'ai-quick' },
       el('button', { class: 'btn small', onclick: () => ask('이 문서를 요약해줘. 거래 구조, 차주·담보·상환재원, 주요 조건(금액·금리·만기·약정), 확인이 필요한 쟁점 순서로.') }, '요약'),
-      el('button', { class: 'btn small', onclick: () => ask('문서에 나온 재무 수치와 주요 대출 조건을 표로 뽑아줘. 열: 항목 | 값 | 단위·기준일 | 쪽. 자료 간 서로 다른 수치는 따로 표시해줘.', { maxTokens: 8192 }) }, '수치·조건 표'),
+      el('button', { class: 'btn small', onclick: () => ask('문서에 나온 재무 수치와 주요 대출 조건을 표로 뽑아줘. 열: 항목 | 값 | 단위·기준일 | 쪽. 자료 간 서로 다른 수치는 따로 표시해줘.', { maxTokens: 24000 }) }, '수치·조건 표'),
       el('button', { class: 'btn small', onclick: highlightFlow }, '찾아서 하이라이트')),
     list,
     el('div', { class: 'ai-compose' }, input, el('button', { class: 'icon dark ai-send', title: '보내기', html: icon('send'), onclick: () => ask(input.value) })));
@@ -227,7 +235,7 @@ async function keyDialog() {
   if (!history.length) renderEmpty();
 }
 
-async function ask(q, { maxTokens = 4096 } = {}) {
+async function ask(q, { maxTokens = 16000 } = {}) {
   q = (q || '').trim();
   if (!q || busy) return;
   if (!S.pdfDoc) return toast('먼저 PDF를 여세요');
@@ -243,7 +251,12 @@ async function ask(q, { maxTokens = 4096 } = {}) {
     const msgs = history.length
       ? [...history, { role: 'user', content: q }]
       : [{ role: 'user', content: [c.block, { type: 'text', text: q }] }];
-    const text = await callClaude(msgs, { maxTokens, onText: (t) => { out.body.innerHTML = md(t); list.scrollTop = list.scrollHeight; } });
+    out.body.innerHTML = '<span class="ai-typing">Claude가 문서를 읽고 있어요…</span>';
+    const text = await callClaude(msgs, {
+      maxTokens,
+      onThinking: (n) => { out.body.innerHTML = `<span class="ai-typing">생각하는 중… (${Math.round(n / 100) / 10}k자)</span>`; },
+      onText: (t) => { out.body.innerHTML = md(t); list.scrollTop = list.scrollHeight; },
+    });
     history = [...msgs, { role: 'assistant', content: text }];
     finishBubble(out, text);
   } catch (e) {
@@ -270,7 +283,10 @@ async function highlightFlow() {
 JSON만 출력한다. 다른 말은 쓰지 않는다.
 {"items":[{"page":쪽번호(정수),"quote":"문서 원문을 글자 그대로 복사한 연속 구간(한 문장 이내, 150자 이하)","note":"관련 이유 한 줄"}]}
 최대 15개. quote는 반드시 해당 쪽 원문과 정확히 일치해야 한다.`;
-    const raw = await callClaude([{ role: 'user', content: [c.block, { type: 'text', text: instr }] }], { maxTokens: 4096 });
+    const raw = await callClaude([{ role: 'user', content: [c.block, { type: 'text', text: instr }] }], {
+      maxTokens: 16000,
+      onThinking: (n) => { out.body.innerHTML = `<span class="ai-typing">관련 부분 찾는 중… (${Math.round(n / 100) / 10}k자 검토)</span>`; },
+    });
     const json = JSON.parse(raw.replace(/^[\s\S]*?(\{[\s\S]*\})[\s\S]*$/, '$1'));
     const items = json.items || [];
     const found = [], missed = [];
