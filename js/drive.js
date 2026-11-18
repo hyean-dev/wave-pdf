@@ -145,12 +145,16 @@ export async function downloadAsPdf(f, onStep = () => {}) {
     if (OFFICE[f.mimeType]) {
       onStep('구글 문서 형식으로 바꾸는 중…');
       try {
-        const r = await api(`${D}files/${f.id}/copy?supportsAllDrives=true&fields=id`, {
+        const r = await api(`${D}files/${f.id}/copy?supportsAllDrives=true&fields=id,mimeType`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: tempName, mimeType: OFFICE[f.mimeType] }),
         });
-        temp = (await r.json()).id;
+        const j = await r.json();
+        temp = j.id;
+        // the copy may come back as a plain .docx copy (not converted) → can't export; use upload conversion instead
+        if (j.mimeType !== OFFICE[f.mimeType]) throw new Error('copy did not convert');
       } catch (e1) {
+        if (temp) { api(`${D}files/${temp}?supportsAllDrives=true`, { method: 'DELETE' }).catch(() => {}); temp = null; }
         console.warn('copy-convert failed, trying upload-convert', e1);
         onStep('원본을 받아서 다시 변환하는 중…');
         const bytes = await download(f.id);
