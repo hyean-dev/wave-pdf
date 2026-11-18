@@ -10,7 +10,7 @@ import { pickSignature } from './sign.js';
 import { initAI, toggleAI, aiBusy } from './ai.js';
 import * as OL from './outline.js';
 
-const APP_VERSION = '1.13.0';
+const APP_VERSION = '1.13.1';
 const container = $('#viewerContainer');
 
 // ---------------- icons ----------------
@@ -837,19 +837,28 @@ function bookmarkMenu(i, anchor) {
 }
 function renderBookmarks(body) {
   const list = S.outline;
-  const tools = el('div', { class: 'bm-tools' },
-    el('button', { class: 'btn small', onclick: addBookmark }, '+ 지금 쪽 추가'),
-    el('button', { class: 'btn small', onclick: autoBookmarks }, '자동 생성'),
-    S.prevOutline !== undefined ? el('button', { class: 'btn small', onclick: () => { S.outline = S.prevOutline || []; S.prevOutline = undefined; OL.markOutlineChanged(); } }, '되돌리기') : null);
-  if (list == null) { body.replaceChildren(tools, el('div', { class: 'muted pad' }, bmLoading ? '책갈피를 불러오는 중…' : '')); return; }
-  const note = S.outlineAuto && !S.outlineDirty ? el('div', { class: 'bm-note' }, '원본에 책갈피가 없어서 제목을 찾아 자동으로 만들었어요. 저장하면 PDF에 함께 들어가요.') : null;
-  if (!list.length) { body.replaceChildren(tools, el('div', { class: 'muted pad' }, '책갈피가 없어요. "자동 생성"을 누르면 문서 제목을 찾아 만들어 줘요.')); return; }
-  const cur = VW.viewer.currentPageNumber - 1;
-  const rows = list.map((it, i) => el('div', { class: `bm-row ${it.page === cur ? 'cur' : ''}`, style: { paddingLeft: 8 + it.level * 16 + 'px' } },
-    el('button', { class: `bm-title lv${Math.min(it.level, 2)}`, title: it.title, onclick: () => goBookmark(it) }, it.title),
-    el('span', { class: 'bm-page' }, String(it.page + 1)),
-    el('button', { class: 'icon dark bm-more', title: '편집', html: icon('more'), onclick: (e) => bookmarkMenu(i, e.currentTarget) })));
-  body.replaceChildren(tools, note, el('div', { class: 'bm-list' }, rows));
+  const tb = (ic, title, fn) => el('button', { class: 'bm-tb', title, 'aria-label': title, html: icon(ic), onclick: fn });
+  const head = el('div', { class: 'bm-head' },
+    el('span', { class: 'bm-count' }, list?.length ? `책갈피 ${list.length}` : '책갈피'),
+    S.prevOutline !== undefined ? tb('undo', '자동 생성 전으로 되돌리기', () => { S.outline = S.prevOutline || []; S.prevOutline = undefined; OL.markOutlineChanged(); }) : null,
+    tb('sparkles', '제목을 찾아 자동 생성', autoBookmarks),
+    tb('plus', '지금 보는 위치에 추가', addBookmark));
+  const parts = [head];
+  if (list == null) parts.push(el('div', { class: 'bm-empty' }, bmLoading ? '책갈피를 불러오는 중…' : ''));
+  else if (!list.length) parts.push(el('div', { class: 'bm-empty' }, '책갈피가 없어요. ✨ 버튼을 누르면 제목을 찾아 만들어 줘요.'));
+  else {
+    if (S.outlineAuto && !S.outlineDirty) parts.push(el('div', { class: 'bm-note' }, '자동으로 만든 책갈피예요 · 저장하면 PDF에 들어가요'));
+    // current section = last bookmark at or before the page being read
+    const cur = VW.viewer.currentPageNumber - 1;
+    let curIdx = -1;
+    list.forEach((it, i) => { if (it.page <= cur) curIdx = i; });
+    const rows = list.map((it, i) => el('div', { class: `bm-row lv${Math.min(it.level, 2)} ${i === curIdx ? 'cur' : ''}`, style: { paddingLeft: 8 + it.level * 14 + 'px' } },
+      el('button', { class: 'bm-title', title: it.title, onclick: () => goBookmark(it) }, it.title),
+      el('span', { class: 'bm-page' }, String(it.page + 1)),
+      el('button', { class: 'bm-more', title: '편집', 'aria-label': '편집', html: icon('more'), onclick: (e) => bookmarkMenu(i, e.currentTarget) })));
+    parts.push(el('div', { class: 'bm-list' }, rows));
+  }
+  body.replaceChildren(...parts);
 }
 
 async function copyAllComments() {
@@ -955,6 +964,11 @@ $('#viewMode').onclick = cycleViewMode;
 // ---------------- header buttons ----------------
 $('#btnMenu').onclick = openMenu;
 $('#btnPanel').onclick = () => togglePanel();
+// don't leave chrome buttons focused after a mouse/touch click (keyboard shortcuts would re-trigger them and draw a focus ring)
+document.addEventListener('click', (e) => {
+  const b = e.target.closest?.('button');
+  if (b && e.detail > 0 && b.closest('#topbar, #toolbar, #zoomCtl, #tabBar, #toolOptions, #panelTabs, #sidePanel')) b.blur();
+}, true);
 $('#btnAI').onclick = () => toggleAI();
 $('#btnSearch').onclick = () => ($('#searchBar').hidden ? openSearch() : closeSearch());
 $('#btnPages').onclick = () => pageEditor();
