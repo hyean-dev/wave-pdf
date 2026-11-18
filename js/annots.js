@@ -3,6 +3,7 @@ import { S, CFG, emit, on, PALETTE, saveCfg } from './state.js';
 import { viewer, eventBus, scrollToPoint } from './viewer.js';
 import { $, el, svgEl, uid, hexToRgb, rgbToHex, toast, modal, icon, clamp } from './util.js';
 import { underlineRect, arrowHead, wrapText } from './pdfio.js';
+import { recognize, ellipsePoints, headAt } from './snap.js';
 
 let container;
 const MARKUP = new Set(['highlight', 'underline', 'strike']);
@@ -12,6 +13,7 @@ export const typeLabel = (a) => (a.type === 'ink' && a.marker ? '형광펜' : TY
 
 // ---------------- history ----------------
 const undoStack = [], redoStack = [];
+let lastSnap = null; // last auto-corrected line/arrow (for a follow-up arrow head stroke)
 const snap = () => JSON.stringify(S.annots);
 export function resetHistory() { undoStack.length = 0; redoStack.length = 0; emitHistory(); }
 export function getHistory() { return { undo: [...undoStack], redo: [...redoStack] }; }
@@ -657,9 +659,36 @@ function onUp(e) {
     case 'ink': {
       if (!g.pts.length) return;
       const cfg = CFG[g.tool];
-      const path = [];
-      for (const pt of g.pts) { const q = g.vp.convertToPdfPoint(pt[0], pt[1]); path.push(Math.round(q[0] * 100) / 100, Math.round(q[1] * 100) / 100); }
-      commit(() => pageAnns(g.p).push(newAnn('ink', { paths: [path], width: cfg.width, color: hexToRgb(cfg.color), opacity: 1, marker: g.tool === 'marker' })), g.p);
+      const r2 = (v) => Math.round(v * 100) / 100;
+      const pp = g.pts.map((pt) => g.vp.convertToPdfPoint(pt[0], pt[1]));
+      const flat = (pts) => pts.flatMap((q) => [r2(q[0]), r2(q[1])]);
+      const base = { width: cfg.width, color: hexToRgb(cfg.color), opacity: 1 };
+      const ink = (pts) => newAnn('ink', { ...base, paths: [flat(pts)], marker: g.tool === 'marker' });
+      const arrow = (a, b) => newAnn('arrow', { ...base, line: [a[0], a[1], b[0], b[1]].map(r2), head: true });
+      const swap = (id, a) => commit(() => { S.annots[g.p] = pageAnns(g.p).filter((x) => x.id !== id); pageAnns(g.p).push(a); }, g.p);
+      const snapOn = CFG.snap !== false;
+      const ls = lastSnap;
+      lastSnap = null;
+      // a small stroke at the end of the line just drawn = arrow head
+      if (snapOn && g.tool === 'pen' && ls && ls.page === g.p && Date.now() - ls.t < 2500 && findAnn(g.p, ls.id)) {
+        const k = headAt(pp, ls);
+        if (k && ls.kind === 'arrow') { if (k === 'b') lastSnap = { ...ls, t: Date.now() }; if (k === 'b') break; }
+        else if (k) {
+          const [from, to] = k === 'b' ? [ls.a, ls.b] : [ls.b, ls.a];
+          const a = arrow(from, to);
+          swap(ls.id, a);
+          lastSnap = { page: g.p, id: a.id, kind: 'arrow', a: from, b: to, t: Date.now() };
+          break;
+        }
+      }
+      const raw = ink(pp);
+      commit(() => pageAnns(g.p).push(raw), g.p);
+      const sh = snapOn ? recognize(pp) : null;
+      if (!sh || (g.tool === 'marker' && sh.kind !== 'line')) break;
+      // second step, so one undo brings the hand-drawn stroke back
+      const a = sh.kind === 'arrow' ? arrow(sh.a, sh.b) : ink(sh.kind === 'line' ? [sh.a, sh.b] : ellipsePoints(sh));
+      swap(raw.id, a);
+      if (sh.kind !== 'ellipse') lastSnap = { page: g.p, id: a.id, kind: sh.kind, a: sh.a, b: sh.b, t: Date.now() };
       break;
     }
     case 'shape': {

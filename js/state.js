@@ -23,6 +23,7 @@ const DEFAULT_CFG = {
   shape: { color: '#E53935', width: 1.5, kind: 'square' },
   note: { color: '#FFD54F' },
   penOnly: false,
+  snap: true,
 };
 export const CFG = (() => {
   try { return { ...DEFAULT_CFG, ...JSON.parse(localStorage.getItem('toolCfg') || '{}') }; } catch { return { ...DEFAULT_CFG }; }

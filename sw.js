@@ -1,9 +1,9 @@
 // Wave PDF service worker: offline app shell + Android share target
-const VERSION = 'wavepdf-v1.13.1';
+const VERSION = 'wavepdf-v1.14.0';
 const CORE = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'js/app.js', 'js/state.js', 'js/util.js', 'js/icons.js', 'js/store.js', 'js/viewer.js', 'js/annots.js',
-  'js/pdfio.js', 'js/drive.js', 'js/pages.js', 'js/sign.js', 'js/ai.js', 'js/outline.js',
+  'js/pdfio.js', 'js/drive.js', 'js/pages.js', 'js/sign.js', 'js/ai.js', 'js/outline.js', 'js/snap.js',
   'vendor/pdf-lib.min.js', 'vendor/fontkit.umd.min.js', 'vendor/Sortable.min.js',
   'vendor/pdfjs-5.7.284/pdf.min.mjs', 'vendor/pdfjs-5.7.284/pdf.worker.min.mjs', 'vendor/pdfjs-5.7.284/pdf_viewer.mjs', 'vendor/pdfjs-5.7.284/pdf_viewer.css',
   'icons/icon-192.png', 'icons/icon-512.png',
