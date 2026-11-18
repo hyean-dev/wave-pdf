@@ -155,26 +155,55 @@ function updateTitle() {
   document.title = S.pdfDoc ? `${S.dirty ? '• ' : ''}${S.fileName} - Wave PDF` : 'Wave PDF';
 }
 
+
+const OPEN_ACCEPT = 'application/pdf,.pdf,.docx,.doc,.rtf,.odt,.txt,.xlsx,.xls,.csv,.ods,.pptx,.ppt,.odp';
+const isPdfFile = (f) => /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name);
+/** Local file → {bytes, name} as PDF (Office files converted through Drive). null if cancelled. */
+async function localFileAsPdf(f) {
+  if (isPdfFile(f)) return { bytes: new Uint8Array(await f.arrayBuffer()), name: f.name, pdf: true };
+  if (!DR.convertTarget(f.name)) { toast('PDF·워드·엑셀·파워포인트 파일만 열 수 있어요'); return null; }
+  if (!DR.isConfigured()) { DR.setupGuide(); return null; }
+  const ok = await confirmDialog(`"${f.name}"을(를) PDF로 변환해서 열까요?\n구글 드라이브에 잠깐 올려 변환한 뒤 바로 지워요. 서식이 조금 다를 수 있어요.`, '변환해서 열기');
+  if (!ok) return null;
+  const tokP = DR.ensureToken(); // right after the click, so the sign-in popup is allowed
+  const b = busy('PDF로 변환 중…');
+  try {
+    await tokP;
+    const bytes = await DR.convertLocalToPdf(f, (m) => b.set(m));
+    return { bytes, name: f.name.replace(/\.[^.]+$/, '') + '.pdf', pdf: false };
+  } catch (e) {
+    if (e.message !== 'CANCELLED') modal({ title: '변환하지 못했어요', body: el('div', { class: 'muted', style: { whiteSpace: 'pre-wrap' } }, e.message || String(e)) });
+    return null;
+  } finally { b.close(); }
+}
+async function openLocalFile(f, handle) {
+  const r = await localFileAsPdf(f);
+  if (!r) return;
+  return openBytes(r.bytes, r.name, r.pdf && handle ? { type: 'local', handle } : { type: 'local' });
+}
 async function openLocal() {
   if (window.showOpenFilePicker) {
     try {
-      const [h] = await window.showOpenFilePicker({ types: [{ description: 'PDF', accept: { 'application/pdf': ['.pdf'] } }] });
+      const [h] = await window.showOpenFilePicker({ types: [
+        { description: 'PDF', accept: { 'application/pdf': ['.pdf'] } },
+        { description: '워드·엑셀·파워포인트 (PDF로 변환)', accept: { 'application/octet-stream': ['.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt', '.rtf', '.odt', '.ods', '.odp', '.csv', '.txt'] } },
+      ] });
       const f = await h.getFile();
-      return openBytes(new Uint8Array(await f.arrayBuffer()), f.name, { type: 'local', handle: h });
+      return openLocalFile(f, h);
     } catch (e) { if (e.name !== 'AbortError') toast(e.message); return; }
   }
   const input = $('#fileInput');
   input.value = '';
   input.onchange = async () => {
     const f = input.files[0];
-    if (f) openBytes(new Uint8Array(await f.arrayBuffer()), f.name, { type: 'local' });
+    if (f) openLocalFile(f);
   };
   input.click();
 }
 function pickLocalBytes() {
   return new Promise((res) => {
-    const input = el('input', { type: 'file', accept: 'application/pdf,.pdf' });
-    input.onchange = async () => { const f = input.files[0]; res(f ? { bytes: new Uint8Array(await f.arrayBuffer()), name: f.name } : null); };
+    const input = el('input', { type: 'file', accept: OPEN_ACCEPT });
+    input.onchange = async () => { const f = input.files[0]; res(f ? await localFileAsPdf(f) : null); };
     input.click();
   });
 }
@@ -643,8 +672,9 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 window.addEventListener('dragover', (e) => { e.preventDefault(); });
 window.addEventListener('drop', async (e) => {
   e.preventDefault();
-  const f = [...(e.dataTransfer?.files || [])].find((x) => /pdf$/i.test(x.type) || /\.pdf$/i.test(x.name));
-  if (f) openBytes(new Uint8Array(await f.arrayBuffer()), f.name, { type: 'local' });
+  const files = [...(e.dataTransfer?.files || [])];
+  const f = files.find(isPdfFile) || files[0];
+  if (f) openLocalFile(f);
 });
 
 // ---------------- startup ----------------

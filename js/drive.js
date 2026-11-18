@@ -181,6 +181,39 @@ export async function downloadAsPdf(f, onStep = () => {}) {
   }
 }
 
+const EXT_TYPE = {
+  docx: GDOC.doc, doc: GDOC.doc, rtf: GDOC.doc, txt: GDOC.doc, odt: GDOC.doc,
+  xlsx: GDOC.sheet, xls: GDOC.sheet, csv: GDOC.sheet, ods: GDOC.sheet,
+  pptx: GDOC.slide, ppt: GDOC.slide, odp: GDOC.slide,
+};
+/** Google Docs target type for a local file name, or null */
+export function convertTarget(name) { return EXT_TYPE[(name.split('.').pop() || '').toLowerCase()] || null; }
+
+/** Convert a local Office file to PDF via a temporary Drive upload (deleted right after) */
+export async function convertLocalToPdf(file, onStep = () => {}) {
+  const target = convertTarget(file.name);
+  if (!target) throw new Error('변환할 수 없는 형식이에요');
+  let temp = null;
+  try {
+    onStep('드라이브에 임시로 올리는 중…');
+    const fd = new FormData();
+    fd.append('metadata', new Blob([JSON.stringify({ name: `[Wave PDF 변환중] ${file.name}`, mimeType: target })], { type: 'application/json' }));
+    fd.append('file', file);
+    const r = await api(`${U}files?uploadType=multipart&fields=id,mimeType`, { method: 'POST', body: fd });
+    temp = (await r.json()).id;
+    onStep('PDF로 내보내는 중…');
+    try {
+      const e = await api(`${D}files/${temp}/export?mimeType=application/pdf`);
+      return new Uint8Array(await e.arrayBuffer());
+    } catch (e) {
+      if (/too large|exportSizeLimit|size limit/i.test(e.message)) throw new Error('변환된 PDF가 구글 드라이브 내보내기 한도(10MB)를 넘었어요. 워드에서 PDF로 저장해서 열어주세요.');
+      throw e;
+    }
+  } finally {
+    if (temp) api(`${D}files/${temp}?supportsAllDrives=true`, { method: 'DELETE' }).catch(() => {});
+  }
+}
+
 // ---------------- name search (substring, like Windows Explorer) ----------------
 let index = null, indexP = null;
 const normName = (s) => (s || '').normalize('NFKC').toLowerCase().replace(/[\s_\-()[\]{}【】「」·,]+/g, '');
