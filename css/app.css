@@ -1,4 +1,5 @@
 :root {
+  color-scheme: light;
   --accent: #0f3b5f;
   --accent-2: #1e88e5;
   --bg: #e8ecf0;
@@ -331,7 +332,8 @@ body:not(.has-doc) #btnAI { display: none; }
 @media (min-width: 1100px) { body.ai-open #viewerContainer { right: 400px; } }
 .ai-head { display: flex; align-items: center; gap: 4px; padding: 6px 6px 6px 12px; border-bottom: 1px solid var(--line); }
 .ai-title { display: flex; align-items: center; gap: 6px; font-weight: 700; color: var(--accent); flex: 1; }
-.ai-model { border: 1px solid var(--line); border-radius: 8px; padding: 4px 6px; font: inherit; font-size: 12.5px; background: #fff; max-width: 150px; }
+.ai-model { border: 1px solid var(--line); border-radius: 8px; padding: 4px 6px; font: inherit; font-size: 12.5px; background: #fff; color: var(--text); max-width: 160px; }
+.ai-model option { background: #fff; color: #1b2733; }
 .ai-head .icon { width: 34px; height: 34px; font-size: 18px; }
 .ai-quick { display: flex; gap: 6px; padding: 8px 10px; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
 .ai-list { flex: 1; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
@@ -366,3 +368,5 @@ body.view-sepia .pdfViewer .page { filter: sepia(0.45) brightness(0.93) contrast
 .drv-ico.word { color: #1e5bb8; } .drv-ico.excel { color: #1b7f45; } .drv-ico.ppt { color: #d24726; } .drv-ico.other { color: #9aa5b1; }
 .drv-item.disabled { opacity: .5; }
 .drv-sep { font-size: 12px; font-weight: 700; color: var(--muted); padding: 10px 12px 4px; border-top: 1px solid var(--line); }
+
+select, input, textarea { color: var(--text); background-color: #fff; }
