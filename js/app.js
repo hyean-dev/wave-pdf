@@ -10,7 +10,7 @@ import { pickSignature } from './sign.js';
 import { initAI, toggleAI, aiBusy } from './ai.js';
 import * as OL from './outline.js';
 
-const APP_VERSION = '1.14.0';
+const APP_VERSION = '1.14.1';
 const container = $('#viewerContainer');
 
 // ---------------- icons ----------------
@@ -124,7 +124,7 @@ function renderToolOptions() {
   if (t === 'pen' || t === 'marker') {
     const cb = el('input', { type: 'checkbox', checked: CFG.snap !== false });
     cb.addEventListener('change', () => { CFG.snap = cb.checked; saveCfg(); });
-    parts.push(el('label', { class: 'check', title: '반듯하게 그은 선, 동그라미, 화살표를 깔끔한 모양으로 바꿔요. 되돌리기(Ctrl+Z)를 한 번 누르면 손으로 그린 모양으로 돌아가요' }, cb, t === 'pen' ? ' 선·원·화살표 자동 보정' : ' 직선 자동 보정'));
+    parts.push(el('label', { class: 'check', title: '반듯하게 그은 선, 동그라미, 화살표를 깔끔한 모양으로 바꿔요. 되돌리기(Ctrl+Z)를 한 번 누르면 손으로 그린 모양으로 돌아가요' }, cb, ' 자동 보정'));
   }
   if (['pen', 'marker', 'shape', 'eraser'].includes(t) && isTouchDevice()) {
     const cb = el('input', { type: 'checkbox', checked: CFG.penOnly });
@@ -287,7 +287,7 @@ async function bgAutoSave(t) {
 }
 function renderTabs() {
   const bar = $('#tabBar');
-  const show = tabs.length > 1;
+  const show = tabs.length > 0 && !!stOf(tabs[0]).baseBytes;
   bar.hidden = !show;
   document.body.classList.toggle('has-tabs', show);
   if (!show) { bar.replaceChildren(); return; }
