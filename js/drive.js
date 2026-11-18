@@ -138,19 +138,40 @@ export function fileKind(f) {
 }
 
 /** PDF bytes for a Google/Office document (Office files are converted via a temporary Google copy) */
-export async function downloadAsPdf(f) {
+export async function downloadAsPdf(f, onStep = () => {}) {
   let id = f.id, temp = null;
-  if (OFFICE[f.mimeType]) {
-    const r = await api(`${D}files/${f.id}/copy?supportsAllDrives=true&fields=id`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: `[Wave PDF 변환중] ${f.name}`, mimeType: OFFICE[f.mimeType], parents: f.parents }),
-    });
-    temp = (await r.json()).id;
-    id = temp;
-  }
+  const tempName = `[Wave PDF 변환중] ${f.name}`;
   try {
-    const r = await api(`${D}files/${id}/export?mimeType=application/pdf`);
-    return new Uint8Array(await r.arrayBuffer());
+    if (OFFICE[f.mimeType]) {
+      onStep('구글 문서 형식으로 바꾸는 중…');
+      try {
+        const r = await api(`${D}files/${f.id}/copy?supportsAllDrives=true&fields=id`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: tempName, mimeType: OFFICE[f.mimeType] }),
+        });
+        temp = (await r.json()).id;
+      } catch (e1) {
+        console.warn('copy-convert failed, trying upload-convert', e1);
+        onStep('원본을 받아서 다시 변환하는 중…');
+        const bytes = await download(f.id);
+        const fd = new FormData();
+        fd.append('metadata', new Blob([JSON.stringify({ name: tempName, mimeType: OFFICE[f.mimeType] })], { type: 'application/json' }));
+        fd.append('file', new Blob([bytes], { type: f.mimeType }));
+        const r = await api(`${U}files?uploadType=multipart&fields=id`, { method: 'POST', body: fd });
+        temp = (await r.json()).id;
+      }
+      id = temp;
+    }
+    onStep('PDF로 내보내는 중…');
+    try {
+      const r = await api(`${D}files/${id}/export?mimeType=application/pdf`);
+      return new Uint8Array(await r.arrayBuffer());
+    } catch (e) {
+      if (/too large|exportSizeLimit|size limit/i.test(e.message)) {
+        throw new Error('변환된 PDF가 구글 드라이브 내보내기 한도(10MB)를 넘었어요. 워드에서 PDF로 저장한 파일을 드라이브에 올려서 열어주세요.');
+      }
+      throw e;
+    }
   } finally {
     if (temp) api(`${D}files/${temp}?supportsAllDrives=true`, { method: 'DELETE' }).catch(() => {});
   }

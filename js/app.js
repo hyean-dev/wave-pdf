@@ -191,14 +191,19 @@ async function openDrive() {
   try {
     if (f.convert) {
       if (!(await confirmDialog(`"${f.name}"을(를) PDF로 변환해서 열까요?\n원본은 그대로 두고, 저장은 "드라이브에 새로 저장"으로 해요. 서식이 조금 다를 수 있어요.`, '변환해서 열기'))) return;
-      const bytes = await DR.withBusy('PDF로 변환 중…', () => DR.downloadAsPdf(f));
+      const b = busy('PDF로 변환 중…');
+      let bytes;
+      try { bytes = await DR.downloadAsPdf(f, (m) => b.set(m)); } finally { b.close(); }
       const name = f.name.replace(/\.[^.]+$/, '') + '.pdf';
       await openBytes(bytes, name, { type: 'converted', parents: f.parents });
       return;
     }
     const bytes = await DR.withBusy('드라이브에서 받는 중…', () => DR.download(f.id));
     await openBytes(bytes, f.name, { type: 'drive', driveId: f.id, parents: f.parents, canEdit: f.canEdit });
-  } catch (e) { toast(e.message); }
+  } catch (e) {
+    console.error(e);
+    modal({ title: '파일을 열지 못했어요', body: el('div', { class: 'muted', style: { whiteSpace: 'pre-wrap' } }, e.message || String(e)) });
+  }
 }
 async function pickDriveBytes() {
   if (!driveGuard()) return null;
