@@ -523,3 +523,12 @@ body.view-dark .bm-row.cur::before { background: #6cb4ff; }
 body.view-dark .bm-page { color: #6e7c89; }
 body.view-dark .bm-more:hover { background: rgba(255,255,255,.08); }
 body.view-dark .tool { color: #b8c4cf; }
+
+/* ---------- shortcuts ---------- */
+.keys { max-height: 60vh; overflow-y: auto; padding-right: 4px; }
+.keys-h { font-size: 12px; font-weight: 700; color: var(--muted); margin: 12px 0 4px; }
+.keys-h:first-child { margin-top: 0; }
+.keys-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 0; font-size: 13.5px; }
+.keys-k { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+kbd { font: 600 12px/1 ui-monospace, Consolas, monospace; padding: 4px 7px; border-radius: 6px; background: #eef2f6; border: 1px solid #d5dde6; border-bottom-width: 2px; color: var(--text); white-space: nowrap; }
+body.view-dark kbd { background: #262e36; border-color: #3a444e; }

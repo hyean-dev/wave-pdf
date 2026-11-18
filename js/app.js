@@ -10,7 +10,7 @@ import { pickSignature } from './sign.js';
 import { initAI, toggleAI, aiBusy } from './ai.js';
 import * as OL from './outline.js';
 
-const APP_VERSION = '1.14.2';
+const APP_VERSION = '1.15.0';
 const container = $('#viewerContainer');
 
 // ---------------- icons ----------------
@@ -664,6 +664,7 @@ function openMenu() {
     menuItem('merge', 'PDF 합치기', () => pageEditor(true), { disabled: !has }),
     menuItem('lock', S.password ? '암호 변경/해제' : '암호 걸기', setPassword, { disabled: !has }),
     el('div', { class: 'menu-sep' }),
+    menuItem('info', '단축키', showShortcuts),
     menuItem('settings', '설정', openSettings),
     has ? menuItem('x', tabs.length > 1 ? '이 탭 닫기' : '문서 닫기', closeDoc) : null);
   const back = el('div', { class: 'sheet-back', onpointerdown: (e) => { if (e.target === back) closeSheet(); } }, sheet);
@@ -679,6 +680,17 @@ async function setPassword() {
 }
 async function closeDoc() { return closeTab(activeTab); }
 
+function showShortcuts() {
+  const groups = [
+    ['파일·탭', [['Ctrl+O', '열기'], ['Ctrl+S', '저장'], ['Ctrl+Tab / Ctrl+PgDn', '다음 탭'], ['Ctrl+Shift+Tab / Ctrl+PgUp', '이전 탭']]],
+    ['보기', [['D', '화면 모드 (기본 → 흑백 반전 → 세피아)'], ['Ctrl+F', '검색'], ['Ctrl+휠', '확대·축소']]],
+    ['도구', [['H', '이동(손)'], ['T', '텍스트 선택'], ['Y', '형광펜'], ['U', '밑줄'], ['P', '펜'], ['M', '마커'], ['E', '지우개'], ['X', '글상자'], ['N', '메모'], ['Esc', '이동 도구로 / 선택 해제']]],
+    ['편집', [['Ctrl+Z', '되돌리기'], ['Ctrl+Y / Ctrl+Shift+Z', '다시 실행'], ['Delete', '선택한 주석 삭제'], ['Ctrl+B', '글상자 굵게 (입력 중)']]],
+  ];
+  const body = el('div', { class: 'keys' }, ...groups.flatMap(([g, rows]) => [el('div', { class: 'keys-h' }, g),
+    ...rows.map(([k, d]) => el('div', { class: 'keys-row' }, el('span', { class: 'keys-d' }, d), el('span', { class: 'keys-k' }, ...k.split(' / ').map((x) => el('kbd', {}, x)))))]));
+  modal({ title: '단축키', body, buttons: [{ label: '닫기', value: null, primary: true }] });
+}
 async function openSettings() {
   const author = el('input', { class: 'input', value: S.author });
   const penOnly = el('input', { type: 'checkbox', checked: CFG.penOnly });
@@ -1044,6 +1056,7 @@ document.addEventListener('keydown', (e) => {
   if ((e.key === 'Delete' || e.key === 'Backspace') && S.selected) { e.preventDefault(); AN.deleteSelected(); return; }
   if (e.key === 'Escape') { if (S.tool !== 'hand') selectTool('hand'); else AN.deselect(); }
   if (!mod && !e.altKey && e.key === 'd' && S.pdfDoc) { cycleViewMode(); return; }
+  if (!mod && !e.altKey && e.key === '?') { showShortcuts(); return; }
   const map = { h: 'hand', t: 'text', y: 'highlight', u: 'underline', p: 'pen', m: 'marker', e: 'eraser', x: 'freetext', n: 'note' };
   if (!mod && !e.altKey && map[e.key] && S.pdfDoc) onToolClick(map[e.key]);
 });
