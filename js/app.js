@@ -189,6 +189,13 @@ async function openDrive() {
   const f = await DR.browse({ mode: 'file' });
   if (!f) return;
   try {
+    if (f.convert) {
+      if (!(await confirmDialog(`"${f.name}"을(를) PDF로 변환해서 열까요?\n원본은 그대로 두고, 저장은 "드라이브에 새로 저장"으로 해요. 서식이 조금 다를 수 있어요.`, '변환해서 열기'))) return;
+      const bytes = await DR.withBusy('PDF로 변환 중…', () => DR.downloadAsPdf(f));
+      const name = f.name.replace(/\.[^.]+$/, '') + '.pdf';
+      await openBytes(bytes, name, { type: 'converted', parents: f.parents });
+      return;
+    }
     const bytes = await DR.withBusy('드라이브에서 받는 중…', () => DR.download(f.id));
     await openBytes(bytes, f.name, { type: 'drive', driveId: f.id, parents: f.parents, canEdit: f.canEdit });
   } catch (e) { toast(e.message); }
@@ -197,7 +204,7 @@ async function pickDriveBytes() {
   if (!driveGuard()) return null;
   const f = await DR.browse({ mode: 'file', title: '추가할 PDF 선택' });
   if (!f) return null;
-  const bytes = await DR.withBusy('드라이브에서 받는 중…', () => DR.download(f.id));
+  const bytes = await DR.withBusy(f.convert ? 'PDF로 변환 중…' : '드라이브에서 받는 중…', () => (f.convert ? DR.downloadAsPdf(f) : DR.download(f.id)));
   return { bytes, name: f.name };
 }
 async function pickPdfAny() {
@@ -240,6 +247,7 @@ async function save() {
       setStatus('저장됨');
       return markSaved('드라이브에 저장했어요');
     }
+    if (src.type === 'converted') return saveToDriveNew();
     if (src.handle?.createWritable) {
       const permP = src.handle.requestPermission ? src.handle.requestPermission({ mode: 'readwrite' }) : Promise.resolve('granted');
       if ((await permP) !== 'granted') throw new Error('파일에 쓸 권한이 없어요');
@@ -372,7 +380,7 @@ function openMenu() {
   closeSheet();
   const has = !!S.pdfDoc;
   const src = S.source || {};
-  const saveHint = src.type === 'drive' ? '드라이브 원본' : src.handle ? '원본 파일' : '다운로드';
+  const saveHint = src.type === 'drive' ? '드라이브 원본' : src.type === 'converted' ? '드라이브에 새로' : src.handle ? '원본 파일' : '다운로드';
   const sheet = el('div', { class: 'sheet' },
     el('div', { class: 'sheet-title' }, 'Wave PDF'),
     menuItem('device', '내 기기에서 열기', openLocal),

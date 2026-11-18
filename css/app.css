@@ -362,3 +362,7 @@ body.view-dark #viewerContainer { background: #15191d; }
 body.view-dark .pdfViewer .page { filter: invert(0.92) hue-rotate(180deg); box-shadow: none; }
 body.view-sepia #viewerContainer { background: #d9cfbd; }
 body.view-sepia .pdfViewer .page { filter: sepia(0.45) brightness(0.93) contrast(0.95); }
+
+.drv-ico.word { color: #1e5bb8; } .drv-ico.excel { color: #1b7f45; } .drv-ico.ppt { color: #d24726; } .drv-ico.other { color: #9aa5b1; }
+.drv-item.disabled { opacity: .5; }
+.drv-sep { font-size: 12px; font-weight: 700; color: var(--muted); padding: 10px 12px 4px; border-top: 1px solid var(--line); }

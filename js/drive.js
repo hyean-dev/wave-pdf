@@ -111,6 +111,88 @@ export async function createFile(name, parentId, bytes) {
   return (await api(`${U}files?uploadType=multipart&supportsAllDrives=true&fields=id,name,parents,capabilities/canEdit`, { method: 'POST', body: fd })).json();
 }
 
+
+// ---------------- file types ----------------
+const FOLDER = 'application/vnd.google-apps.folder';
+const GDOC = { doc: 'application/vnd.google-apps.document', sheet: 'application/vnd.google-apps.spreadsheet', slide: 'application/vnd.google-apps.presentation' };
+const OFFICE = {
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': GDOC.doc,
+  'application/msword': GDOC.doc,
+  'application/rtf': GDOC.doc,
+  'text/plain': GDOC.doc,
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': GDOC.sheet,
+  'application/vnd.ms-excel': GDOC.sheet,
+  'text/csv': GDOC.sheet,
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': GDOC.slide,
+  'application/vnd.ms-powerpoint': GDOC.slide,
+};
+export function fileKind(f) {
+  const m = f.mimeType || '', n = (f.name || '').toLowerCase();
+  if (m === FOLDER) return { k: 'folder', label: '폴더' };
+  if (m === 'application/pdf' || n.endsWith('.pdf')) return { k: 'pdf', label: 'PDF' };
+  if (m === GDOC.doc || OFFICE[m] === GDOC.doc) return { k: 'word', label: m === GDOC.doc ? 'Google 문서' : '워드', convert: true };
+  if (m === GDOC.sheet || OFFICE[m] === GDOC.sheet) return { k: 'excel', label: m === GDOC.sheet ? 'Google 시트' : '엑셀', convert: true };
+  if (m === GDOC.slide || OFFICE[m] === GDOC.slide) return { k: 'ppt', label: m === GDOC.slide ? 'Google 슬라이드' : '파워포인트', convert: true };
+  if (/\.hwpx?$/.test(n)) return { k: 'other', label: '한글(열 수 없음)' };
+  return { k: 'other', label: '열 수 없는 형식' };
+}
+
+/** PDF bytes for a Google/Office document (Office files are converted via a temporary Google copy) */
+export async function downloadAsPdf(f) {
+  let id = f.id, temp = null;
+  if (OFFICE[f.mimeType]) {
+    const r = await api(`${D}files/${f.id}/copy?supportsAllDrives=true&fields=id`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: `[Wave PDF 변환중] ${f.name}`, mimeType: OFFICE[f.mimeType], parents: f.parents }),
+    });
+    temp = (await r.json()).id;
+    id = temp;
+  }
+  try {
+    const r = await api(`${D}files/${id}/export?mimeType=application/pdf`);
+    return new Uint8Array(await r.arrayBuffer());
+  } finally {
+    if (temp) api(`${D}files/${temp}?supportsAllDrives=true`, { method: 'DELETE' }).catch(() => {});
+  }
+}
+
+// ---------------- name search (substring, like Windows Explorer) ----------------
+let index = null, indexP = null;
+const normName = (s) => (s || '').normalize('NFKC').toLowerCase().replace(/[\s_\-()[\]{}【】「」·,]+/g, '');
+async function buildIndex() {
+  if (index && Date.now() - index.t < 10 * 60 * 1000) return index.files;
+  if (!indexP) {
+    indexP = (async () => {
+      const files = [];
+      let pageToken = null;
+      for (let i = 0; i < 25; i++) {
+        const r = await listFiles({ q: `trashed=false and mimeType != '${FOLDER}'`, orderBy: 'modifiedTime desc', pageToken, extra: { pageSize: 1000 } });
+        files.push(...(r.files || []));
+        pageToken = r.nextPageToken;
+        if (!pageToken) break;
+      }
+      index = { t: Date.now(), files };
+      return files;
+    })().finally(() => { indexP = null; });
+  }
+  return indexP;
+}
+export async function searchFiles(query) {
+  const terms = query.split(/\s+/).map(normName).filter(Boolean);
+  if (!terms.length) return [];
+  const longest = query.split(/\s+/).sort((a, b) => b.length - a.length)[0];
+  const [all, full] = await Promise.all([
+    buildIndex(),
+    listFiles({ q: `fullText contains '${esc(longest)}' and trashed=false and mimeType != '${FOLDER}'`, orderBy: 'modifiedTime desc', extra: { pageSize: 30 } }).then((r) => r.files || []).catch(() => []),
+  ]);
+  const byName = all.filter((f) => { const n = normName(f.name); return terms.every((t) => n.includes(t)); });
+  const seen = new Set(byName.map((f) => f.id));
+  const byContent = full.filter((f) => !seen.has(f.id)).map((f) => ({ ...f, _content: true }));
+  const rank = (f) => ({ pdf: 0, word: 1, excel: 1, ppt: 1 }[fileKind(f).k] ?? 2);
+  byName.sort((a, b) => rank(a) - rank(b) || (b.modifiedTime || '').localeCompare(a.modifiedTime || ''));
+  return [...byName.slice(0, 200), ...byContent];
+}
+
 /** Drive browser. mode: 'file' (pick a PDF) | 'folder' (pick a folder). Returns {id,name,parents,canEdit} or null */
 export function browse({ mode = 'file', title } = {}) {
   return new Promise((resolve) => {
@@ -120,7 +202,7 @@ export function browse({ mode = 'file', title } = {}) {
     const list = el('div', { class: 'drv-list' });
     const crumbs = el('div', { class: 'drv-crumbs' });
     const more = el('button', { class: 'btn small drv-more', onclick: () => load(true) }, '더 보기');
-    const search = el('input', { class: 'input', type: 'search', placeholder: 'PDF 이름 검색' });
+    const search = el('input', { class: 'input', type: 'search', placeholder: mode === 'file' ? '파일 이름 검색 (띄어쓰기로 여러 단어)' : '폴더 이름 검색' });
     const tabs = el('div', { class: 'seg' });
     const tabDefs = mode === 'file' ? [['mine', '내 드라이브'], ['recent', '최근'], ['shared', '공유됨']] : [['mine', '내 드라이브'], ['shared', '공유됨']];
     for (const [k, label] of tabDefs) {
@@ -141,10 +223,25 @@ export function browse({ mode = 'file', title } = {}) {
     async function load(append = false) {
       renderCrumbs();
       if (!append) { list.replaceChildren(el('div', { class: 'muted pad' }, '불러오는 중…')); nextToken = null; }
-      const pdfQ = mode === 'file' ? "(mimeType='application/pdf' or mimeType='application/vnd.google-apps.folder')" : "mimeType='application/vnd.google-apps.folder'";
-      let q, orderBy = 'folder,name';
-      if (query) { q = `name contains '${esc(query)}' and ${mode === 'file' ? "mimeType='application/pdf'" : "mimeType='application/vnd.google-apps.folder'"} and trashed=false`; orderBy = 'modifiedTime desc'; }
-      else if (tab === 'recent') { q = "mimeType='application/pdf' and trashed=false"; orderBy = 'viewedByMeTime desc'; }
+      const pdfQ = mode === 'file' ? "mimeType != 'application/vnd.google-apps.shortcut'" : "mimeType='application/vnd.google-apps.folder'";
+      let q, orderBy = 'folder,modifiedTime desc';
+      if (query && mode === 'file') {
+        if (!append) list.replaceChildren(el('div', { class: 'muted pad' }, '드라이브에서 찾는 중… (처음 한 번은 목록을 불러와서 조금 걸려요)'));
+        try {
+          const res = await searchFiles(query);
+          list.replaceChildren();
+          let shownContent = false;
+          for (const f of res) {
+            if (f._content && !shownContent) { list.append(el('div', { class: 'drv-sep' }, '내용에 검색어가 들어 있는 파일')); shownContent = true; }
+            list.append(item(f));
+          }
+          if (!res.length) list.append(el('div', { class: 'muted pad' }, '찾는 파일이 없어요'));
+          more.hidden = true;
+        } catch (e) { list.replaceChildren(el('div', { class: 'muted pad' }, e.message === 'CANCELLED' ? '로그인이 취소됐어요' : e.message)); }
+        return;
+      }
+      if (query) { q = `name contains '${esc(query)}' and mimeType='application/vnd.google-apps.folder' and trashed=false`; orderBy = 'modifiedTime desc'; }
+      else if (tab === 'recent') { q = `mimeType != '${FOLDER}' and trashed=false`; orderBy = 'viewedByMeTime desc'; }
       else if (tab === 'shared' && stack.length === 1) { q = `sharedWithMe and ${pdfQ} and trashed=false`; }
       else q = `'${stack[stack.length - 1].id}' in parents and ${pdfQ} and trashed=false`;
       try {
@@ -159,14 +256,19 @@ export function browse({ mode = 'file', title } = {}) {
       }
     }
     function item(f) {
-      const folder = f.mimeType === 'application/vnd.google-apps.folder';
-      return el('button', { class: 'drv-item', onclick: () => {
-        if (folder) { if (tab !== 'mine') { tab = 'mine'; stack.splice(1); tabs.querySelectorAll('.seg-btn').forEach((b) => b.classList.toggle('on', b.dataset.k === 'mine')); } query = ''; search.value = ''; stack.push({ id: f.id, name: f.name }); load(); }
-        else if (mode === 'file') closeFn({ id: f.id, name: f.name, parents: f.parents, canEdit: f.capabilities?.canEdit !== false });
+      const kind = fileKind(f);
+      const folder = kind.k === 'folder';
+      const openable = folder || kind.k === 'pdf' || kind.convert;
+      const icons = { folder: 'folder', pdf: 'file', word: 'file', excel: 'table', ppt: 'file', other: 'file' };
+      return el('button', { class: `drv-item ${openable ? '' : 'disabled'}`, onclick: async () => {
+        if (folder) { if (tab !== 'mine') { tab = 'mine'; stack.splice(1); tabs.querySelectorAll('.seg-btn').forEach((b) => b.classList.toggle('on', b.dataset.k === 'mine')); } query = ''; search.value = ''; stack.push({ id: f.id, name: f.name }); load(); return; }
+        if (mode !== 'file') return;
+        if (!openable) { toast('PDF·워드·엑셀·파워포인트·구글 문서만 열 수 있어요'); return; }
+        closeFn({ id: f.id, name: f.name, parents: f.parents, mimeType: f.mimeType, convert: !!kind.convert, canEdit: f.capabilities?.canEdit !== false });
       } },
-      el('span', { class: `drv-ico ${folder ? 'folder' : 'pdf'}`, html: icon(folder ? 'folder' : 'file') }),
+      el('span', { class: `drv-ico ${kind.k}`, html: icon(icons[kind.k]) }),
       el('span', { class: 'drv-name' }, f.name),
-      el('span', { class: 'drv-meta' }, folder ? '' : `${fmtDate(f.modifiedTime)} · ${fmtSize(+f.size)}`));
+      el('span', { class: 'drv-meta' }, folder ? '' : `${kind.k === 'pdf' ? '' : kind.label + ' · '}${fmtDate(f.modifiedTime)}${f.size ? ' · ' + fmtSize(+f.size) : ''}`));
     }
     const body = el('div', { class: 'drv' }, tabs, search, crumbs, list, more);
     const buttons = [{ label: '취소', value: null }];
