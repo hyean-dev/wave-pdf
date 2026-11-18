@@ -423,3 +423,7 @@ body.view-dark #viewerContainer, body.view-dark #panelBody, body.view-dark .ai-l
   scrollbar-color: #48535e transparent;
 }
 @media (min-width: 1100px) { body.ai-open #zoomCtl { right: 412px; } }
+
+.drv-bar { display: flex; align-items: center; gap: 8px; min-height: 30px; }
+.drv-bar .drv-crumbs { flex: 1; min-width: 0; }
+.drv-sort { margin-left: auto; border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; font: inherit; font-size: 13px; background: #fff; color: var(--text); }

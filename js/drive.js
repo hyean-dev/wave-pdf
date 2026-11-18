@@ -193,12 +193,40 @@ export async function searchFiles(query) {
   return [...byName.slice(0, 200), ...byContent];
 }
 
+
+// ---------------- sorting ----------------
+const SORTS = [
+  ['name', '이름 (가→하)', 'folder,name_natural'],
+  ['name_desc', '이름 (하→가)', 'folder,name_natural desc'],
+  ['modified', '수정한 날짜 (최신순)', 'folder,modifiedTime desc'],
+  ['modified_asc', '수정한 날짜 (오래된순)', 'folder,modifiedTime'],
+  ['size', '크기 (큰 순)', 'folder,quotaBytesUsed desc'],
+  ['type', '유형', 'folder,name_natural'],
+];
+const collator = new Intl.Collator('ko', { numeric: true, sensitivity: 'base' });
+const KIND_ORDER = { folder: 0, pdf: 1, word: 2, excel: 3, ppt: 4, other: 5 };
+function sortFiles(arr, key) {
+  const t = (f) => f.modifiedTime || '';
+  const cmp = {
+    name: (a, b) => collator.compare(a.name, b.name),
+    name_desc: (a, b) => collator.compare(b.name, a.name),
+    modified: (a, b) => t(b).localeCompare(t(a)),
+    modified_asc: (a, b) => t(a).localeCompare(t(b)),
+    size: (a, b) => (+b.size || 0) - (+a.size || 0),
+    type: (a, b) => KIND_ORDER[fileKind(a).k] - KIND_ORDER[fileKind(b).k] || collator.compare(a.name, b.name),
+  }[key] || (() => 0);
+  return [...arr].sort((a, b) => (fileKind(a).k === 'folder' ? 0 : 1) - (fileKind(b).k === 'folder' ? 0 : 1) || cmp(a, b));
+}
+
 /** Drive browser. mode: 'file' (pick a PDF) | 'folder' (pick a folder). Returns {id,name,parents,canEdit} or null */
 export function browse({ mode = 'file', title } = {}) {
   return new Promise((resolve) => {
     let closeFn;
     const stack = [{ id: 'root', name: '내 드라이브' }];
-    let tab = 'mine', query = '', nextToken = null;
+    let tab = 'mine', query = '', nextToken = null, loaded = [];
+    let sortKey = localStorage.getItem('driveSort') || 'name';
+    const sortSel = el('select', { class: 'drv-sort', title: '정렬 기준', onchange: (e) => { sortKey = e.target.value; localStorage.setItem('driveSort', sortKey); load(); } },
+      SORTS.map(([v, l]) => el('option', { value: v, selected: v === sortKey }, l)));
     const list = el('div', { class: 'drv-list' });
     const crumbs = el('div', { class: 'drv-crumbs' });
     const more = el('button', { class: 'btn small drv-more', onclick: () => load(true) }, '더 보기');
@@ -224,11 +252,12 @@ export function browse({ mode = 'file', title } = {}) {
       renderCrumbs();
       if (!append) { list.replaceChildren(el('div', { class: 'muted pad' }, '불러오는 중…')); nextToken = null; }
       const pdfQ = mode === 'file' ? "mimeType != 'application/vnd.google-apps.shortcut'" : "mimeType='application/vnd.google-apps.folder'";
-      let q, orderBy = 'folder,modifiedTime desc';
+      let q, orderBy = (SORTS.find((x) => x[0] === sortKey) || SORTS[0])[2];
       if (query && mode === 'file') {
         if (!append) list.replaceChildren(el('div', { class: 'muted pad' }, '드라이브에서 찾는 중… (처음 한 번은 목록을 불러와서 조금 걸려요)'));
         try {
-          const res = await searchFiles(query);
+          const found = await searchFiles(query);
+          const res = [...sortFiles(found.filter((f) => !f._content), sortKey), ...found.filter((f) => f._content)];
           list.replaceChildren();
           let shownContent = false;
           for (const f of res) {
@@ -246,9 +275,9 @@ export function browse({ mode = 'file', title } = {}) {
       else q = `'${stack[stack.length - 1].id}' in parents and ${pdfQ} and trashed=false`;
       try {
         const r = await listFiles({ q, orderBy, pageToken: append ? nextToken : null });
-        if (!append) list.replaceChildren();
+        loaded = append ? [...loaded, ...(r.files || [])] : (r.files || []);
         nextToken = r.nextPageToken || null;
-        for (const f of r.files || []) list.append(item(f));
+        list.replaceChildren(...sortFiles(loaded, sortKey).map(item));
         if (!list.children.length) list.append(el('div', { class: 'muted pad' }, '항목이 없어요'));
         more.hidden = !nextToken;
       } catch (e) {
@@ -270,7 +299,7 @@ export function browse({ mode = 'file', title } = {}) {
       el('span', { class: 'drv-name' }, f.name),
       el('span', { class: 'drv-meta' }, folder ? '' : `${kind.k === 'pdf' ? '' : kind.label + ' · '}${fmtDate(f.modifiedTime)}${f.size ? ' · ' + fmtSize(+f.size) : ''}`));
     }
-    const body = el('div', { class: 'drv' }, tabs, search, crumbs, list, more);
+    const body = el('div', { class: 'drv' }, tabs, search, el('div', { class: 'drv-bar' }, crumbs, sortSel), list, more);
     const buttons = [{ label: '취소', value: null }];
     if (mode === 'folder') buttons.push({ label: '이 폴더에 저장', primary: true, value: () => { const f = stack[stack.length - 1]; return { id: f.id, name: f.name }; } });
     buttons.push({ label: '로그아웃', value: 'logout' });
