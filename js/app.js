@@ -59,11 +59,12 @@ function selectTool(k) {
 }
 on('settool', selectTool);
 on('needsign', () => onToolClick('sign'));
+on('ftstyle', () => renderToolOptions());
 
-function swatchRow(group, cfg) {
+function swatchRow(group, cfg, onPick) {
   const colors = PALETTE[group];
   const row = el('div', { class: 'opt-swatches', title: '색을 길게 누르거나 오른쪽 클릭하면 팔레트에서 빠져요' });
-  const pick = (c) => { cfg.color = c; saveCfg(); renderToolOptions(); };
+  const pick = (c) => { cfg.color = c; saveCfg(); renderToolOptions(); onPick?.(c); };
   const remove = (c) => {
     if (colors.length <= 1) return toast('색이 하나는 있어야 해요');
     PALETTE[group] = colors.filter((x) => x.toUpperCase() !== c.toUpperCase());
@@ -109,8 +110,10 @@ function renderToolOptions() {
   if (t === 'marker') parts.push(swatchRow('highlight', CFG.marker), slider('굵기', CFG.marker, 'width', 4, 30, 1));
   if (t === 'freetext') {
     const sizes = el('div', { class: 'seg small' });
-    for (const s of [8, 10, 12, 14, 18, 24]) sizes.append(el('button', { class: `seg-btn ${CFG.freetext.size === s ? 'on' : ''}`, onclick: () => { CFG.freetext.size = s; saveCfg(); renderToolOptions(); } }, String(s)));
-    parts.push(swatchRow('ink', CFG.freetext), sizes);
+    const ft = CFG.freetext;
+    for (const s of [8, 10, 12, 14, 18, 24]) sizes.append(el('button', { class: `seg-btn ${ft.size === s ? 'on' : ''}`, onclick: () => { ft.size = s; saveCfg(); renderToolOptions(); AN.editStyle({ fontSize: s }); } }, String(s)));
+    const bold = el('button', { class: `seg-btn bold-btn ${ft.bold ? 'on' : ''}`, title: '굵게 (Ctrl+B)', html: icon('bold'), onclick: () => { ft.bold = !ft.bold; saveCfg(); renderToolOptions(); AN.editStyle({ bold: ft.bold }); } });
+    parts.push(swatchRow('ink', ft, (c) => AN.editStyle({ color: c })), el('div', { class: 'seg small' }, bold), sizes);
   }
   if (t === 'shape') {
     const kinds = el('div', { class: 'seg small' });

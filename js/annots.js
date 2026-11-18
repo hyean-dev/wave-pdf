@@ -1,5 +1,5 @@
 // Annotation model, overlay rendering and tool interaction
-import { S, CFG, emit, on, PALETTE } from './state.js';
+import { S, CFG, emit, on, PALETTE, saveCfg } from './state.js';
 import { viewer, eventBus, scrollToPoint } from './viewer.js';
 import { $, el, svgEl, uid, hexToRgb, rgbToHex, toast, modal, icon, clamp } from './util.js';
 import { underlineRect, arrowHead, wrapText } from './pdfio.js';
@@ -201,6 +201,7 @@ function drawAnn(a, vp, hl, top, html) {
         width: `${((swap ? H : W) / W) * 100}%`,
         height: `${((swap ? W : H) / H) * 100}%`,
         fontSize: `calc(var(--scale-factor) * ${a.fontSize || 12}px)`,
+        fontWeight: a.bold ? '700' : '',
         padding: `calc(var(--scale-factor) * 2px)`,
         color: col,
         transform: `translate(-50%,-50%)${dl ? ` rotate(${dl}deg)` : ''}`,
@@ -297,7 +298,10 @@ function showAnnMenu() {
   const sw = a.type === 'note' ? PAL.note : isHl ? PAL.highlight : PAL.ink;
   const items = [];
   if (a.type !== 'stamp') items.push({ swatches: sw, current: rgbToHex(a.color).toUpperCase(), pick: (c) => { commit(() => { a.color = hexToRgb(c); a.modified = Date.now(); }, page); showAnnMenu(); } });
-  if (a.type === 'freetext') items.push({ icon: 'edit', label: '편집', run: () => startEdit(page, a) });
+  if (a.type === 'freetext') {
+    items.push({ icon: 'bold', label: a.bold ? '보통' : '굵게', run: () => { commit(() => { a.bold = !a.bold; a.modified = Date.now(); refitFreetext(page, a); }, page); showAnnMenu(); } });
+    items.push({ icon: 'edit', label: '편집', run: () => startEdit(page, a) });
+  }
   else items.push({ icon: 'note', label: a.text ? '메모 수정' : '메모', run: () => editComment(page, a) });
   if (a.quote) items.push({ icon: 'copy', label: '복사', run: () => copyText(a.quote) });
   items.push({ icon: 'trash', label: '삭제', danger: true, run: () => deleteSelected() });
@@ -755,15 +759,22 @@ function startEdit(p, a, isNew = false) {
   deselect();
   const ta = el('textarea', { class: 'ft-editor', placeholder: '텍스트 입력', spellcheck: 'false' });
   ta.value = a.text || '';
-  editing = { page: p, a, isNew, ta };
+  editing = { page: p, a, isNew, ta, style: { color: rgbToHex(a.color), fontSize: a.fontSize || 12, bold: !!a.bold } };
   renderPage(p);
   ta.addEventListener('input', placeEditor);
-  ta.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); finishEdit(); } });
+  ta.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); finishEdit(); }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
+      e.preventDefault();
+      CFG.freetext.bold = !editing.style.bold; saveCfg();
+      editStyle({ bold: CFG.freetext.bold }); emit('ftstyle');
+    }
+  });
   setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 30);
 }
 function placeEditor() {
   if (!editing) return;
-  const { page, a, ta } = editing;
+  const { page, a, ta, style } = editing;
   const pv = viewer.getPageView(page);
   if (!pv?.viewport) return;
   const vp = pv.viewport, wrap = ensureLayer(pv), html = wrap.children[2];
@@ -772,7 +783,7 @@ function placeEditor() {
   const W = swap ? v[3] - v[1] : v[2] - v[0];
   Object.assign(ta.style, {
     left: v[0] + 'px', top: v[1] + 'px', width: W + 'px',
-    fontSize: (a.fontSize || 12) * vp.scale + 'px', color: rgbToHex(a.color),
+    fontSize: style.fontSize * vp.scale + 'px', color: style.color, fontWeight: style.bold ? '700' : '',
     padding: 2 * vp.scale + 'px', transformOrigin: '0 0',
     transform: dl ? `rotate(${dl}deg)` : '',
   });
@@ -780,17 +791,30 @@ function placeEditor() {
   ta.style.height = 'auto';
   ta.style.height = ta.scrollHeight + 2 + 'px';
 }
+export function isEditingText() { return !!editing; }
+export function editStyle(patch) {
+  if (!editing) return false;
+  Object.assign(editing.style, patch);
+  placeEditor();
+  editing.ta.focus();
+  return true;
+}
+function fitRect(page, a, text) {
+  const pv = viewer.getPageView(page);
+  if (!pv?.viewport || !text || rotDelta(pv.viewport, a)) return a.rect;
+  const vp = pv.viewport, v = rectToV(vp, a.rect);
+  const h = Math.max(measureHeight(a, text, vp), (a.fontSize || 12) * 1.25 * vp.scale + 4 * vp.scale);
+  return rectToPdf(vp, [v[0], v[1], v[2], v[1] + h]);
+}
+function refitFreetext(page, a) { a.rect = fitRect(page, a, a.text || ''); }
 function finishEdit() {
   if (!editing) return;
-  const { page, a, isNew, ta } = editing;
+  const { page, a, isNew, ta, style } = editing;
   const text = ta.value.replace(/\s+$/, '');
-  const pv = viewer.getPageView(page);
-  let newRect = a.rect;
-  if (pv?.viewport && text && !rotDelta(pv.viewport, a)) {
-    const vp = pv.viewport, v = rectToV(vp, a.rect);
-    const h = Math.max(measureHeight(a, text, vp), (a.fontSize || 12) * 1.25 * vp.scale + 4 * vp.scale);
-    newRect = rectToPdf(vp, [v[0], v[1], v[2], v[1] + h]);
-  }
+  const color = hexToRgb(style.color);
+  const styled = { ...a, fontSize: style.fontSize, bold: style.bold };
+  const newRect = fitRect(page, styled, text);
+  const styleChanged = rgbToHex(a.color).toUpperCase() !== style.color.toUpperCase() || (a.fontSize || 12) !== style.fontSize || !!a.bold !== style.bold;
   editing = null;
   ta.remove();
   if (!text) {
@@ -798,9 +822,11 @@ function finishEdit() {
     else renderPage(page);
     return;
   }
-  if (!isNew && text === a.text && JSON.stringify(newRect) === JSON.stringify(a.rect)) { renderPage(page); return; }
+  if (!isNew && !styleChanged && text === a.text && JSON.stringify(newRect) === JSON.stringify(a.rect)) { renderPage(page); return; }
   commit(() => {
     a.rect = newRect;
+    a.color = color; a.fontSize = style.fontSize;
+    if (style.bold) a.bold = true; else delete a.bold;
     a.text = text; a.modified = Date.now();
     if (isNew) pageAnns(page).push(a);
   }, page);
@@ -808,7 +834,7 @@ function finishEdit() {
 const measureCanvas = document.createElement('canvas').getContext('2d');
 function measureHeight(a, text, vp) {
   const fs = a.fontSize || 12;
-  measureCanvas.font = `${fs}px Pretendard, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif`;
+  measureCanvas.font = `${a.bold ? '700 ' : ''}${fs}px Pretendard, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif`;
   const r = a.rect;
   const lines = wrapText(text, (s) => measureCanvas.measureText(s).width, (r[2] - r[0]) - 4);
   return (lines.length * fs * 1.25 + 4) * vp.scale;

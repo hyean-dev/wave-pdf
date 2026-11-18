@@ -123,6 +123,7 @@ function parseAnnot(ctx, d, pageRot) {
       const c1 = da.match(/([\d.]+)\s+g(\s|$)/);
       a.color = c3 ? [+c3[1], +c3[2], +c3[3]] : c1 ? [+c1[1], +c1[1], +c1[1]] : [0, 0, 0];
       a.rect = rect;
+      if (lk(ctx, d.get(N('WaveBold'))) || /bold|font-weight:\s*[6-9]00/i.test(txt(ctx, d.get(N('DS'))) + txt(ctx, d.get(N('RC'))))) a.bold = true;
       const wr = num(ctx, d.get(N('WaveRot')));
       a.rot = wr ?? pageRot;
       a.opacity = 1;
@@ -393,13 +394,16 @@ async function addAnnot(doc, page, a, getFont, images, imgCache) {
       const swap = rot === 90 || rot === 270;
       const bw = swap ? r[3] - r[1] : r[2] - r[0];
       const bh = swap ? r[2] - r[0] : r[3] - r[1];
-      const lines = wrapText(a.text || '', (s) => font.widthOfTextAtSize(s, fs), bw - pd * 2);
-      let content = `q ${rotMatrix(rot, r).map(f2).join(' ')} cm BT /F1 ${f2(fs)} Tf ${rg(col)} rg ${f2(lh)} TL ${f2(pd)} ${f2(bh - pd - fs * 0.93)} Td\n`;
+      const bk = a.bold ? 1.04 : 1;
+      const lines = wrapText(a.text || '', (s) => font.widthOfTextAtSize(s, fs) * bk, bw - pd * 2);
+      const boldOps = a.bold ? `${rg(col)} RG ${f2(fs * 0.045)} w 1 j 2 Tr ` : '';
+      let content = `q ${rotMatrix(rot, r).map(f2).join(' ')} cm ${boldOps}BT /F1 ${f2(fs)} Tf ${rg(col)} rg ${f2(lh)} TL ${f2(pd)} ${f2(bh - pd - fs * 0.93)} Td\n`;
       lines.forEach((ln, i) => { content += `${i ? 'T* ' : ''}${font.encodeText(ln).toString()} Tj\n`; });
       content += 'ET Q';
       const ap = makeAP(doc, r, content, { Font: { F1: font.ref } });
       annotDict(doc, page, { ...a, text: a.text }, 'FreeText', r, {
         DA: PDFString.of(`/Helv ${f2(fs)} Tf ${rg(col)} rg`), WaveRot: rot, AP: { N: ap },
+        WaveBold: a.bold ? true : undefined, DS: a.bold ? PDFString.of(`font-weight:bold; font-size:${f2(fs)}pt`) : undefined,
       });
       break;
     }
