@@ -33,8 +33,16 @@ const bus = new EventTarget();
 export const emit = (n, d) => bus.dispatchEvent(new CustomEvent(n, { detail: d }));
 export const on = (n, f) => bus.addEventListener(n, (e) => f(e.detail));
 
-export const PALETTE = {
+const PAL_DEFAULT = {
   highlight: ['#FFF176', '#A5D6A7', '#90CAF9', '#F48FB1', '#FFCC80', '#CE93D8'],
   ink: ['#212121', '#E53935', '#1E88E5', '#43A047', '#FB8C00', '#8E24AA'],
   note: ['#FFD54F', '#A5D6A7', '#90CAF9', '#F48FB1'],
 };
+/** user-editable palettes (persisted) */
+export const PALETTE = (() => {
+  const base = JSON.parse(JSON.stringify(PAL_DEFAULT));
+  try { const saved = JSON.parse(localStorage.getItem('palettes') || 'null'); if (saved) for (const k of Object.keys(base)) if (Array.isArray(saved[k]) && saved[k].length) base[k] = saved[k]; } catch { /* */ }
+  return base;
+})();
+export const savePalette = () => localStorage.setItem('palettes', JSON.stringify(PALETTE));
+export function resetPalette() { for (const k of Object.keys(PAL_DEFAULT)) PALETTE[k] = [...PAL_DEFAULT[k]]; savePalette(); }

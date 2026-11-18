@@ -1,4 +1,4 @@
-import { S, CFG, saveCfg, emit, on, PALETTE } from './state.js';
+import { S, CFG, saveCfg, emit, on, PALETTE, savePalette, resetPalette } from './state.js';
 import { $, $$, el, icon, toast, modal, confirmDialog, promptDialog, busy, downloadBlob, debounce, isTouchDevice } from './util.js';
 import { idbGet, idbSet, idbDel } from './store.js';
 import * as VW from './viewer.js';
@@ -59,13 +59,34 @@ function selectTool(k) {
 on('settool', selectTool);
 on('needsign', () => onToolClick('sign'));
 
-function swatchRow(colors, cfg) {
-  const row = el('div', { class: 'opt-swatches' });
+function swatchRow(group, cfg) {
+  const colors = PALETTE[group];
+  const row = el('div', { class: 'opt-swatches', title: '색을 길게 누르거나 오른쪽 클릭하면 팔레트에서 빠져요' });
+  const pick = (c) => { cfg.color = c; saveCfg(); renderToolOptions(); };
+  const remove = (c) => {
+    if (colors.length <= 1) return toast('색이 하나는 있어야 해요');
+    PALETTE[group] = colors.filter((x) => x.toUpperCase() !== c.toUpperCase());
+    savePalette(); renderToolOptions(); toast('팔레트에서 뺐어요');
+  };
   for (const c of colors) {
-    row.append(el('button', { class: `swatch ${cfg.color.toUpperCase() === c.toUpperCase() ? 'on' : ''}`, style: { background: c }, onclick: () => { cfg.color = c; saveCfg(); renderToolOptions(); } }));
+    let timer = null, longPressed = false;
+    const b = el('button', { class: `swatch ${cfg.color.toUpperCase() === c.toUpperCase() ? 'on' : ''}`, style: { background: c } });
+    b.addEventListener('click', () => { if (longPressed) { longPressed = false; return; } pick(c); });
+    b.addEventListener('contextmenu', (e) => { e.preventDefault(); remove(c); });
+    b.addEventListener('pointerdown', (e) => { if (e.pointerType === 'mouse') return; timer = setTimeout(() => { longPressed = true; remove(c); }, 550); });
+    for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) b.addEventListener(ev, () => clearTimeout(timer));
+    row.append(b);
   }
-  const custom = el('input', { type: 'color', class: 'swatch custom', value: cfg.color, title: '직접 선택' });
-  custom.addEventListener('change', () => { cfg.color = custom.value; saveCfg(); renderToolOptions(); });
+  const custom = el('input', { type: 'color', class: 'swatch custom', value: cfg.color, title: '새 색 고르기 (팔레트에 추가)' });
+  custom.addEventListener('change', () => {
+    const c = custom.value.toUpperCase();
+    if (!PALETTE[group].some((x) => x.toUpperCase() === c)) {
+      PALETTE[group] = [...PALETTE[group], c].slice(-12);
+      savePalette();
+      toast('팔레트에 추가했어요');
+    }
+    pick(c);
+  });
   row.append(custom);
   return row;
 }
@@ -81,21 +102,21 @@ function renderToolOptions() {
   box.replaceChildren();
   if (!optsOpen || !S.pdfDoc) { box.hidden = true; document.body.classList.remove('opts-open'); return; }
   const parts = [];
-  if (t === 'highlight') parts.push(swatchRow(PALETTE.highlight, CFG.highlight));
-  if (t === 'underline' || t === 'strike') parts.push(swatchRow(PALETTE.ink, CFG[t]));
-  if (t === 'pen') parts.push(swatchRow(PALETTE.ink, CFG.pen), slider('굵기', CFG.pen, 'width', 0.5, 8, 0.5));
-  if (t === 'marker') parts.push(swatchRow(PALETTE.highlight, CFG.marker), slider('굵기', CFG.marker, 'width', 4, 30, 1));
+  if (t === 'highlight') parts.push(swatchRow('highlight', CFG.highlight));
+  if (t === 'underline' || t === 'strike') parts.push(swatchRow('ink', CFG[t]));
+  if (t === 'pen') parts.push(swatchRow('ink', CFG.pen), slider('굵기', CFG.pen, 'width', 0.5, 8, 0.5));
+  if (t === 'marker') parts.push(swatchRow('highlight', CFG.marker), slider('굵기', CFG.marker, 'width', 4, 30, 1));
   if (t === 'freetext') {
     const sizes = el('div', { class: 'seg small' });
     for (const s of [8, 10, 12, 14, 18, 24]) sizes.append(el('button', { class: `seg-btn ${CFG.freetext.size === s ? 'on' : ''}`, onclick: () => { CFG.freetext.size = s; saveCfg(); renderToolOptions(); } }, String(s)));
-    parts.push(swatchRow(PALETTE.ink, CFG.freetext), sizes);
+    parts.push(swatchRow('ink', CFG.freetext), sizes);
   }
   if (t === 'shape') {
     const kinds = el('div', { class: 'seg small' });
     for (const [k, ic] of [['square', 'square'], ['circle', 'circle'], ['arrow', 'arrow']]) kinds.append(el('button', { class: `seg-btn ${CFG.shape.kind === k ? 'on' : ''}`, html: icon(ic), onclick: () => { CFG.shape.kind = k; saveCfg(); renderToolOptions(); } }));
-    parts.push(kinds, swatchRow(PALETTE.ink, CFG.shape), slider('굵기', CFG.shape, 'width', 0.5, 8, 0.5));
+    parts.push(kinds, swatchRow('ink', CFG.shape), slider('굵기', CFG.shape, 'width', 0.5, 8, 0.5));
   }
-  if (t === 'note') parts.push(swatchRow(PALETTE.note, CFG.note));
+  if (t === 'note') parts.push(swatchRow('note', CFG.note));
   if (['pen', 'marker', 'shape', 'eraser'].includes(t) && isTouchDevice()) {
     const cb = el('input', { type: 'checkbox', checked: CFG.penOnly });
     cb.addEventListener('change', () => { CFG.penOnly = cb.checked; saveCfg(); });
@@ -465,6 +486,8 @@ async function openSettings() {
       el('div', { class: 'row gap' },
         el('button', { class: 'btn small', onclick: () => DR.setupGuide() }, DR.isConfigured() ? '클라이언트 ID 변경' : '연결 설정'),
         signed ? el('button', { class: 'btn small', onclick: (e) => { DR.signOut(); e.target.remove(); toast('로그아웃했어요'); } }, '로그아웃') : null)),
+    el('div', { class: 'field' }, el('span', {}, '색 팔레트'),
+      el('div', { class: 'row gap' }, el('button', { class: 'btn small', onclick: () => { resetPalette(); renderToolOptions(); toast('팔레트를 기본값으로 돌렸어요'); } }, '기본 색으로 되돌리기'))),
     el('p', { class: 'muted small' }, `버전 ${APP_VERSION}`));
   const ok = await modal({ title: '설정', body, buttons: [{ label: '닫기', value: false }, { label: '저장', value: true, primary: true }] });
   if (!ok) return;

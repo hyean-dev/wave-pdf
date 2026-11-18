@@ -1,5 +1,5 @@
 // Annotation model, overlay rendering and tool interaction
-import { S, CFG, emit, on } from './state.js';
+import { S, CFG, emit, on, PALETTE } from './state.js';
 import { viewer, eventBus, scrollToPoint } from './viewer.js';
 import { $, el, svgEl, uid, hexToRgb, rgbToHex, toast, modal, icon, clamp } from './util.js';
 import { underlineRect, arrowHead, wrapText } from './pdfio.js';
@@ -305,11 +305,7 @@ function showAnnMenu() {
   if (a.text && a.type !== 'freetext') extra = el('div', { class: 'ctx-comment', onclick: () => editComment(page, a) }, el('b', {}, a.author || ''), ' ', a.text);
   showMenu(items, selBoxRect, extra);
 }
-const PAL = {
-  highlight: ['#FFF176', '#A5D6A7', '#90CAF9', '#F48FB1', '#FFCC80', '#CE93D8'],
-  ink: ['#212121', '#E53935', '#1E88E5', '#43A047', '#FB8C00', '#8E24AA'],
-  note: ['#FFD54F', '#A5D6A7', '#90CAF9', '#F48FB1'],
-};
+const PAL = PALETTE;
 
 export function deleteSelected() {
   if (!S.selected) return;
