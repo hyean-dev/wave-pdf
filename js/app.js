@@ -10,7 +10,7 @@ import { pickSignature } from './sign.js';
 import { initAI, toggleAI, aiBusy } from './ai.js';
 import * as OL from './outline.js';
 
-const APP_VERSION = '1.16.0';
+const APP_VERSION = '1.16.1';
 const container = $('#viewerContainer');
 
 // ---------------- icons ----------------
@@ -125,6 +125,9 @@ function renderToolOptions() {
     const cb = el('input', { type: 'checkbox', checked: CFG.snap !== false });
     cb.addEventListener('change', () => { CFG.snap = cb.checked; saveCfg(); });
     parts.push(el('label', { class: 'check', title: '반듯하게 그은 선, 동그라미, 화살표를 깔끔한 모양으로 바꿔요. 되돌리기(Ctrl+Z)를 한 번 누르면 손으로 그린 모양으로 돌아가요' }, cb, ' 자동 보정'));
+    const stab = el('div', { class: 'seg small', title: '손떨림 보정: 펜이 살짝 흔들려도 선이 매끄럽게 나와요. 강하게 할수록 선이 펜을 조금 늦게 따라와요' });
+    ['끔', '약', '강'].forEach((l, i) => stab.append(el('button', { class: `seg-btn ${(CFG.stab ?? 1) === i ? 'on' : ''}`, onclick: () => { CFG.stab = i; saveCfg(); renderToolOptions(); } }, l)));
+    parts.push(el('div', { class: 'opt-slider' }, el('span', {}, '손떨림 보정'), stab));
   }
   if (['pen', 'marker', 'shape', 'eraser'].includes(t) && isTouchDevice()) {
     const cb = el('input', { type: 'checkbox', checked: CFG.penOnly });

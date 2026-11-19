@@ -3,7 +3,7 @@ import { S, CFG, emit, on, PALETTE, saveCfg } from './state.js';
 import { viewer, eventBus, scrollToPoint } from './viewer.js';
 import { $, el, svgEl, uid, hexToRgb, rgbToHex, toast, modal, icon, clamp } from './util.js';
 import { underlineRect, arrowHead, wrapText } from './pdfio.js';
-import { recognize, ellipsePoints, headAt } from './snap.js';
+import { recognize, ellipsePoints, headAt, stabilize } from './snap.js';
 
 let container;
 const MARKUP = new Set(['highlight', 'underline', 'strike']);
@@ -13,6 +13,8 @@ export const typeLabel = (a) => (a.type === 'ink' && a.marker ? '형광펜' : TY
 
 // ---------------- history ----------------
 const undoStack = [], redoStack = [];
+// hand-shake smoothing strength (sigma, screen px)
+const STAB = [0, 3, 6];
 let lastSnap = null; // last auto-corrected line/arrow (for a follow-up arrow head stroke)
 const snap = () => JSON.stringify(S.annots);
 export function resetHistory() { undoStack.length = 0; redoStack.length = 0; emitHistory(); }
@@ -658,6 +660,7 @@ function onUp(e) {
     }
     case 'ink': {
       if (!g.pts.length) return;
+      g.pts = stabilize(g.pts, STAB[CFG.stab ?? 1]);
       const cfg = CFG[g.tool];
       const r2 = (v) => Math.round(v * 100) / 100;
       const pp = g.pts.map((pt) => g.vp.convertToPdfPoint(pt[0], pt[1]));
@@ -774,7 +777,7 @@ function finishTextSel(g) {
 
 function updateInkTemp() {
   const g = gesture;
-  g.temp.setAttribute('d', smoothD(g.pts));
+  g.temp.setAttribute('d', smoothD(stabilize(g.pts, STAB[CFG.stab ?? 1])));
 }
 
 function eraseAt(e) {

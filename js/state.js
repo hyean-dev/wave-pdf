@@ -24,6 +24,7 @@ const DEFAULT_CFG = {
   note: { color: '#FFD54F' },
   penOnly: false,
   snap: true,
+  stab: 1,
 };
 export const CFG = (() => {
   try { return { ...DEFAULT_CFG, ...JSON.parse(localStorage.getItem('toolCfg') || '{}') }; } catch { return { ...DEFAULT_CFG }; }
