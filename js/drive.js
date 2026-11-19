@@ -114,146 +114,11 @@ export async function createFile(name, parentId, bytes) {
 
 // ---------------- file types ----------------
 const FOLDER = 'application/vnd.google-apps.folder';
-const GDOC = { doc: 'application/vnd.google-apps.document', sheet: 'application/vnd.google-apps.spreadsheet', slide: 'application/vnd.google-apps.presentation' };
-const OFFICE = {
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': GDOC.doc,
-  'application/msword': GDOC.doc,
-  'application/rtf': GDOC.doc,
-  'text/plain': GDOC.doc,
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': GDOC.sheet,
-  'application/vnd.ms-excel': GDOC.sheet,
-  'text/csv': GDOC.sheet,
-  'application/vnd.openxmlformats-officedocument.presentationml.presentation': GDOC.slide,
-  'application/vnd.ms-powerpoint': GDOC.slide,
-};
 export function fileKind(f) {
   const m = f.mimeType || '', n = (f.name || '').toLowerCase();
   if (m === FOLDER) return { k: 'folder', label: '폴더' };
   if (m === 'application/pdf' || n.endsWith('.pdf')) return { k: 'pdf', label: 'PDF' };
-  if (m === GDOC.doc || OFFICE[m] === GDOC.doc) return { k: 'word', label: m === GDOC.doc ? 'Google 문서' : '워드', convert: true };
-  if (m === GDOC.sheet || OFFICE[m] === GDOC.sheet) return { k: 'excel', label: m === GDOC.sheet ? 'Google 시트' : '엑셀', convert: true };
-  if (m === GDOC.slide || OFFICE[m] === GDOC.slide) return { k: 'ppt', label: m === GDOC.slide ? 'Google 슬라이드' : '파워포인트', convert: true };
-  if (/\.hwpx?$/.test(n)) return { k: 'other', label: '한글(열 수 없음)' };
-  return { k: 'other', label: '열 수 없는 형식' };
-}
-
-
-// ---------------- docx pre-processing for Google's converter ----------------
-// Google Docs drops dotted/dashed/double table borders when importing Word files,
-// so table lines vanish. Rewrite those borders as plain single lines before uploading.
-let jszipP;
-function loadJSZip() {
-  return (jszipP ||= new Promise((res, rej) => {
-    if (window.JSZip) return res(window.JSZip);
-    const sc = document.createElement('script');
-    sc.src = new URL('../vendor/jszip.min.js', import.meta.url).href;
-    sc.onload = () => res(window.JSZip);
-    sc.onerror = () => { jszipP = null; rej(new Error('JSZip 로드 실패')); };
-    document.head.append(sc);
-  }));
-}
-const FANCY_BORDER = /w:val="(dotted|dashed|dashSmallGap|dotDash|dotDotDash|double|triple|thinThick[A-Za-z]*|thickThin[A-Za-z]*|thinThickThin[A-Za-z]*|wave|doubleWave|dashDotStroked|threeDEmboss|threeDEngrave|outset|inset)"/g;
-export async function prepareDocx(blob) {
-  try {
-    const JSZip = await loadJSZip();
-    const zip = await JSZip.loadAsync(blob);
-    let changed = false;
-    for (const name of Object.keys(zip.files)) {
-      if (!/^word\/(document|styles|header\d*|footer\d*)\.xml$/.test(name)) continue;
-      const xml = await zip.file(name).async('string');
-      const out = xml.replace(/<w:(tcBorders|tblBorders)>[\s\S]*?<\/w:\1>/g, (blk) => blk.replace(FANCY_BORDER, 'w:val="single"'));
-      if (out !== xml) { zip.file(name, out); changed = true; }
-    }
-    if (!changed) return blob;
-    return await zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', compression: 'DEFLATE' });
-  } catch (e) { console.warn('docx prepare skipped', e); return blob; }
-}
-const isDocx = (name, mime) => /\.docx$/i.test(name || '') || mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-
-/** Export a Google Docs/Sheets/Slides file as PDF. files.export caps at 10MB, so fall back to the export link. */
-async function exportPdf(id) {
-  try {
-    const r = await api(`${D}files/${id}/export?mimeType=application/pdf`);
-    return new Uint8Array(await r.arrayBuffer());
-  } catch (e) {
-    if (!/too large|exportSizeLimit|size limit/i.test(e.message)) throw e;
-  }
-  const meta = await (await api(`${D}files/${id}?fields=exportLinks&supportsAllDrives=true`)).json();
-  const link = meta.exportLinks?.['application/pdf'];
-  if (!link) throw new Error('큰 파일 내보내기 주소를 받지 못했어요');
-  try {
-    const r = await api(link);
-    return new Uint8Array(await r.arrayBuffer());
-  } catch (e) {
-    console.warn('exportLinks failed', e);
-    throw new Error('변환된 PDF가 커서(10MB 초과) 드라이브가 내보내기를 거부했어요. 워드에서 PDF로 저장해서 열어주세요.');
-  }
-}
-
-/** PDF bytes for a Google/Office document (Office files are converted via a temporary Google copy) */
-export async function downloadAsPdf(f, onStep = () => {}) {
-  let id = f.id, temp = null;
-  const tempName = `[Wave PDF 변환중] ${f.name}`;
-  try {
-    if (OFFICE[f.mimeType]) {
-      onStep('구글 문서 형식으로 바꾸는 중…');
-      try {
-        if (isDocx(f.name, f.mimeType)) throw new Error('docx → upload path (fix table borders)');
-        const r = await api(`${D}files/${f.id}/copy?supportsAllDrives=true&fields=id,mimeType`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: tempName, mimeType: OFFICE[f.mimeType] }),
-        });
-        const j = await r.json();
-        temp = j.id;
-        // the copy may come back as a plain .docx copy (not converted) → can't export; use upload conversion instead
-        if (j.mimeType !== OFFICE[f.mimeType]) throw new Error('copy did not convert');
-      } catch (e1) {
-        if (temp) { api(`${D}files/${temp}?supportsAllDrives=true`, { method: 'DELETE' }).catch(() => {}); temp = null; }
-        console.warn('copy-convert failed, trying upload-convert', e1);
-        onStep('원본을 받아서 변환하는 중…');
-        const bytes = await download(f.id);
-        let blob = new Blob([bytes], { type: f.mimeType });
-        if (isDocx(f.name, f.mimeType)) blob = await prepareDocx(blob);
-        const fd = new FormData();
-        fd.append('metadata', new Blob([JSON.stringify({ name: tempName, mimeType: OFFICE[f.mimeType] })], { type: 'application/json' }));
-        fd.append('file', blob);
-        const r = await api(`${U}files?uploadType=multipart&fields=id`, { method: 'POST', body: fd });
-        temp = (await r.json()).id;
-      }
-      id = temp;
-    }
-    onStep('PDF로 내보내는 중…');
-    return await exportPdf(id);
-  } finally {
-    if (temp) api(`${D}files/${temp}?supportsAllDrives=true`, { method: 'DELETE' }).catch(() => {});
-  }
-}
-
-const EXT_TYPE = {
-  docx: GDOC.doc, doc: GDOC.doc, rtf: GDOC.doc, txt: GDOC.doc, odt: GDOC.doc,
-  xlsx: GDOC.sheet, xls: GDOC.sheet, csv: GDOC.sheet, ods: GDOC.sheet,
-  pptx: GDOC.slide, ppt: GDOC.slide, odp: GDOC.slide,
-};
-/** Google Docs target type for a local file name, or null */
-export function convertTarget(name) { return EXT_TYPE[(name.split('.').pop() || '').toLowerCase()] || null; }
-
-/** Convert a local Office file to PDF via a temporary Drive upload (deleted right after) */
-export async function convertLocalToPdf(file, onStep = () => {}) {
-  const target = convertTarget(file.name);
-  if (!target) throw new Error('변환할 수 없는 형식이에요');
-  let temp = null;
-  try {
-    onStep('드라이브에 임시로 올리는 중…');
-    const fd = new FormData();
-    fd.append('metadata', new Blob([JSON.stringify({ name: `[Wave PDF 변환중] ${file.name}`, mimeType: target })], { type: 'application/json' }));
-    fd.append('file', isDocx(file.name, file.type) ? await prepareDocx(file) : file);
-    const r = await api(`${U}files?uploadType=multipart&fields=id,mimeType`, { method: 'POST', body: fd });
-    temp = (await r.json()).id;
-    onStep('PDF로 내보내는 중… (큰 파일은 1분까지 걸려요)');
-    return await exportPdf(temp);
-  } finally {
-    if (temp) api(`${D}files/${temp}?supportsAllDrives=true`, { method: 'DELETE' }).catch(() => {});
-  }
+  return { k: 'other', label: 'PDF 아님' };
 }
 
 // ---------------- name search (substring, like Windows Explorer) ----------------
@@ -288,7 +153,7 @@ export async function searchFiles(query) {
   const byName = all.filter((f) => { const n = normName(f.name); return terms.every((t) => n.includes(t)); });
   const seen = new Set(byName.map((f) => f.id));
   const byContent = full.filter((f) => !seen.has(f.id)).map((f) => ({ ...f, _content: true }));
-  const rank = (f) => ({ pdf: 0, word: 1, excel: 1, ppt: 1 }[fileKind(f).k] ?? 2);
+  const rank = (f) => (fileKind(f).k === 'pdf' ? 0 : 1);
   byName.sort((a, b) => rank(a) - rank(b) || (b.modifiedTime || '').localeCompare(a.modifiedTime || ''));
   return [...byName.slice(0, 200), ...byContent];
 }
@@ -304,7 +169,7 @@ const SORTS = [
   ['type', '유형', 'folder,name_natural'],
 ];
 const collator = new Intl.Collator('ko', { numeric: true, sensitivity: 'base' });
-const KIND_ORDER = { folder: 0, pdf: 1, word: 2, excel: 3, ppt: 4, other: 5 };
+const KIND_ORDER = { folder: 0, pdf: 1, other: 2 };
 function sortFiles(arr, key) {
   const t = (f) => f.modifiedTime || '';
   const cmp = {
@@ -387,13 +252,13 @@ export function browse({ mode = 'file', title } = {}) {
     function item(f) {
       const kind = fileKind(f);
       const folder = kind.k === 'folder';
-      const openable = folder || kind.k === 'pdf' || kind.convert;
-      const icons = { folder: 'folder', pdf: 'file', word: 'file', excel: 'table', ppt: 'file', other: 'file' };
+      const openable = folder || kind.k === 'pdf';
+      const icons = { folder: 'folder', pdf: 'file', other: 'file' };
       return el('button', { class: `drv-item ${openable ? '' : 'disabled'}`, onclick: async () => {
         if (folder) { if (tab !== 'mine') { tab = 'mine'; stack.splice(1); tabs.querySelectorAll('.seg-btn').forEach((b) => b.classList.toggle('on', b.dataset.k === 'mine')); } query = ''; search.value = ''; stack.push({ id: f.id, name: f.name }); load(); return; }
         if (mode !== 'file') return;
-        if (!openable) { toast('PDF·워드·엑셀·파워포인트·구글 문서만 열 수 있어요'); return; }
-        closeFn({ id: f.id, name: f.name, parents: f.parents, mimeType: f.mimeType, convert: !!kind.convert, canEdit: f.capabilities?.canEdit !== false });
+        if (!openable) { toast('PDF 파일만 열 수 있어요'); return; }
+        closeFn({ id: f.id, name: f.name, parents: f.parents, mimeType: f.mimeType, canEdit: f.capabilities?.canEdit !== false });
       } },
       el('span', { class: `drv-ico ${kind.k}`, html: icon(icons[kind.k]) }),
       el('span', { class: 'drv-name' }, f.name),

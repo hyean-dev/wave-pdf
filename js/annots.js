@@ -711,11 +711,14 @@ function onUp(e) {
       const ex = hit && findAnn(g.p, hit.dataset.id);
       if (ex) { startEdit(g.p, ex); break; }
       const fs = CFG.freetext.size, sc = g.vp.scale;
-      const w = Math.min(200 * sc, g.vp.width - g.pt[0] - 4), h = fs * 1.25 * sc + 4 * sc;
-      if (w < 30) return;
+      // starts just wide enough for the placeholder and grows with the text, up to maxW
+      const maxW = Math.min(360 * sc, g.vp.width - g.pt[0] - 4), h = fs * 1.25 * sc + 4 * sc;
+      if (maxW < 30) return;
+      const w = Math.min(maxW, fs * 6 * sc);
       const r = rectToPdf(g.vp, [g.pt[0], g.pt[1] - h / 2, g.pt[0] + w, g.pt[1] + h / 2]);
       const a = newAnn('freetext', { rect: r, fontSize: fs, color: hexToRgb(CFG.freetext.color), rot: g.vp.rotation, opacity: 1 });
       startEdit(g.p, a, true);
+      if (editing) { editing.autoW = maxW / sc; placeEditor(); }
       break;
     }
     case 'tap-note': {
@@ -813,8 +816,17 @@ function placeEditor() {
   const pv = viewer.getPageView(page);
   if (!pv?.viewport) return;
   const vp = pv.viewport, wrap = ensureLayer(pv), html = wrap.children[2];
-  const v = rectToV(vp, a.rect);
+  let v = rectToV(vp, a.rect);
   const dl = rotDelta(vp, a), swap = dl === 90 || dl === 270;
+  if (editing.autoW && !dl) {
+    // new box: as wide as its longest line
+    const fs = style.fontSize;
+    measureCanvas.font = `${style.bold ? '700 ' : ''}${fs}px Pretendard, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif`;
+    const lines = (ta.value || ta.placeholder).split('\n');
+    const w = Math.min(editing.autoW, Math.max(fs * 2, ...lines.map((l) => measureCanvas.measureText(l).width)) + 4 + fs * 0.5);
+    v = [v[0], v[1], v[0] + w * vp.scale, v[3]];
+    a.rect = rectToPdf(vp, v);
+  }
   const W = swap ? v[3] - v[1] : v[2] - v[0];
   Object.assign(ta.style, {
     left: v[0] + 'px', top: v[1] + 'px', width: W + 'px',

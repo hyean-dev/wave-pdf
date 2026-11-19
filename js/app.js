@@ -10,7 +10,7 @@ import { pickSignature } from './sign.js';
 import { initAI, toggleAI, aiBusy } from './ai.js';
 import * as OL from './outline.js';
 
-const APP_VERSION = '1.15.1';
+const APP_VERSION = '1.16.0';
 const container = $('#viewerContainer');
 
 // ---------------- icons ----------------
@@ -32,7 +32,7 @@ initAI();
 const TOOLS = [
   ['hand', 'hand', '이동'], ['text', 'text', '텍스트'], ['highlight', 'highlight', '형광펜'], ['underline', 'underline', '밑줄'],
   ['strike', 'strike', '취소선'], ['pen', 'pen', '펜'], ['marker', 'marker', '마커'], ['eraser', 'eraser', '지우개'],
-  ['freetext', 'freetext', '글상자'], ['note', 'note', '메모'], ['shape', 'shapes', '도형'], ['sign', 'sign', '서명'],
+  ['freetext', 'freetext', '글상자'], ['sign', 'sign', '서명'],
 ];
 const toolsEl = $('#tools');
 for (const [k, ic, label] of TOOLS) {
@@ -382,23 +382,10 @@ function updateTitle() {
 
 const OPEN_ACCEPT = 'application/pdf,.pdf';
 const isPdfFile = (f) => /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name);
-/** Local file → {bytes, name} as PDF (Office files converted through Drive). null if cancelled. */
+/** Local PDF file → {bytes, name}. null if it isn't a PDF. */
 async function localFileAsPdf(f) {
-  if (isPdfFile(f)) return { bytes: new Uint8Array(await f.arrayBuffer()), name: f.name, pdf: true };
-  if (!DR.convertTarget(f.name)) { toast('PDF·워드·엑셀·파워포인트 파일만 열 수 있어요'); return null; }
-  if (!DR.isConfigured()) { DR.setupGuide(); return null; }
-  const ok = await confirmDialog(`"${f.name}"을(를) PDF로 변환해서 열까요?\n구글 드라이브에 잠깐 올려 변환한 뒤 바로 지워요. 서식이 조금 다를 수 있어요.`, '변환해서 열기');
-  if (!ok) return null;
-  const tokP = DR.ensureToken(); // right after the click, so the sign-in popup is allowed
-  const b = busy('PDF로 변환 중…');
-  try {
-    await tokP;
-    const bytes = await DR.convertLocalToPdf(f, (m) => b.set(m));
-    return { bytes, name: f.name.replace(/\.[^.]+$/, '') + '.pdf', pdf: false };
-  } catch (e) {
-    if (e.message !== 'CANCELLED') modal({ title: '변환하지 못했어요', body: el('div', { class: 'muted', style: { whiteSpace: 'pre-wrap' } }, e.message || String(e)) });
-    return null;
-  } finally { b.close(); }
+  if (!isPdfFile(f)) { toast('PDF 파일만 열 수 있어요'); return null; }
+  return { bytes: new Uint8Array(await f.arrayBuffer()), name: f.name, pdf: true };
 }
 async function openLocalFile(f, handle, opts) {
   const r = await localFileAsPdf(f);
@@ -445,15 +432,6 @@ async function openDrive() {
   const f = await DR.browse({ mode: 'file' });
   if (!f) return;
   try {
-    if (f.convert) {
-      if (!(await confirmDialog(`"${f.name}"을(를) PDF로 변환해서 열까요?\n원본은 그대로 두고, 저장은 "드라이브에 새로 저장"으로 해요. 서식이 조금 다를 수 있어요.`, '변환해서 열기'))) return;
-      const b = busy('PDF로 변환 중…');
-      let bytes;
-      try { bytes = await DR.downloadAsPdf(f, (m) => b.set(m)); } finally { b.close(); }
-      const name = f.name.replace(/\.[^.]+$/, '') + '.pdf';
-      await openBytes(bytes, name, { type: 'converted', parents: f.parents });
-      return;
-    }
     const bytes = await DR.withBusy('드라이브에서 받는 중…', () => DR.download(f.id));
     await openBytes(bytes, f.name, { type: 'drive', driveId: f.id, parents: f.parents, canEdit: f.canEdit });
   } catch (e) {
@@ -465,7 +443,7 @@ async function pickDriveBytes() {
   if (!driveGuard()) return null;
   const f = await DR.browse({ mode: 'file', title: '추가할 PDF 선택' });
   if (!f) return null;
-  const bytes = await DR.withBusy(f.convert ? 'PDF로 변환 중…' : '드라이브에서 받는 중…', () => (f.convert ? DR.downloadAsPdf(f) : DR.download(f.id)));
+  const bytes = await DR.withBusy('드라이브에서 받는 중…', () => DR.download(f.id));
   return { bytes, name: f.name };
 }
 async function pickPdfAny() {
@@ -509,7 +487,6 @@ async function save() {
       setStatus('저장됨');
       return markSaved('드라이브에 저장했어요');
     }
-    if (src.type === 'converted') return saveToDriveNew();
     if (src.handle?.createWritable) {
       const permP = src.handle.requestPermission ? src.handle.requestPermission({ mode: 'readwrite' }) : Promise.resolve('granted');
       if ((await permP) !== 'granted') throw new Error('파일에 쓸 권한이 없어요');
@@ -649,7 +626,7 @@ function openMenu() {
   closeSheet();
   const has = !!S.pdfDoc;
   const src = S.source || {};
-  const saveHint = src.type === 'drive' ? '드라이브 원본' : src.type === 'converted' ? '드라이브에 새로' : src.handle ? '원본 파일' : '다운로드';
+  const saveHint = src.type === 'drive' ? '드라이브 원본' : src.handle ? '원본 파일' : '다운로드';
   const sheet = el('div', { class: 'sheet' },
     el('div', { class: 'sheet-title' }, 'Wave PDF'),
     menuItem('device', '내 기기에서 열기', openLocal),
@@ -684,7 +661,7 @@ function showShortcuts() {
   const groups = [
     ['파일·탭', [['Ctrl+O', '열기'], ['Ctrl+S', '저장'], ['Ctrl+1 ~ Ctrl+9', '1~9번째 탭으로'], ['Ctrl+Tab / Ctrl+PgDn', '다음 탭'], ['Ctrl+Shift+Tab / Ctrl+PgUp', '이전 탭']]],
     ['보기', [['D', '화면 모드 (기본 → 흑백 반전 → 세피아)'], ['Ctrl+F', '검색'], ['Ctrl+휠', '확대·축소']]],
-    ['도구', [['H', '이동(손)'], ['T', '텍스트 선택'], ['Y', '형광펜'], ['U', '밑줄'], ['P', '펜'], ['M', '마커'], ['E', '지우개'], ['X', '글상자'], ['N', '메모'], ['Esc', '이동 도구로 / 선택 해제']]],
+    ['도구', [['H', '이동(손)'], ['T', '텍스트 선택'], ['Y', '형광펜'], ['U', '밑줄'], ['P', '펜'], ['M', '마커'], ['E', '지우개'], ['X', '글상자'], ['Esc', '이동 도구로 / 선택 해제']]],
     ['편집', [['Ctrl+Z', '되돌리기'], ['Ctrl+Y / Ctrl+Shift+Z', '다시 실행'], ['Delete', '선택한 주석 삭제'], ['Ctrl+B', '글상자 굵게 (입력 중)']]],
   ];
   const body = el('div', { class: 'keys' }, ...groups.flatMap(([g, rows]) => [el('div', { class: 'keys-h' }, g),
@@ -1058,7 +1035,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { if (S.tool !== 'hand') selectTool('hand'); else AN.deselect(); }
   if (!mod && !e.altKey && e.key === 'd' && S.pdfDoc) { cycleViewMode(); return; }
   if (!mod && !e.altKey && e.key === '?') { showShortcuts(); return; }
-  const map = { h: 'hand', t: 'text', y: 'highlight', u: 'underline', p: 'pen', m: 'marker', e: 'eraser', x: 'freetext', n: 'note' };
+  const map = { h: 'hand', t: 'text', y: 'highlight', u: 'underline', p: 'pen', m: 'marker', e: 'eraser', x: 'freetext' };
   if (!mod && !e.altKey && map[e.key] && S.pdfDoc) onToolClick(map[e.key]);
 });
 window.addEventListener('beforeunload', (e) => { if (S.dirty || tabs.some((t) => stOf(t).dirty)) { persistState.flush(); e.preventDefault(); e.returnValue = ''; } });
