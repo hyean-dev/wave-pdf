@@ -10,7 +10,7 @@ import { pickSignature } from './sign.js';
 import { initAI, toggleAI, aiBusy } from './ai.js';
 import * as OL from './outline.js';
 
-const APP_VERSION = '1.16.2';
+const APP_VERSION = '1.17.0';
 const container = $('#viewerContainer');
 
 // ---------------- icons ----------------
@@ -457,13 +457,13 @@ async function pickPdfAny() {
 }
 
 // ---------------- save ----------------
-async function exportBytes({ quiet = false, st = pickDoc(S) } = {}) {
+async function exportBytes({ quiet = false, st = pickDoc(S), encrypt = true, annots = true } = {}) {
   const b = quiet ? { close() {} } : busy('PDF 만드는 중…');
   try {
     const forms = await VW.collectFormValues(st.pdfDoc);
     const outline = st.outline && (st.outlineDirty || st.outlineAuto) ? st.outline : null;
-    let bytes = await buildPdf({ base: st.baseBytes, annots: st.annots, images: st.images, forms, outline });
-    if (st.password) bytes = await qpdf(bytes, ['--encrypt', st.password, st.password, '256', '--']);
+    let bytes = await buildPdf({ base: st.baseBytes, annots: annots ? st.annots : st.annots.map(() => []), images: st.images, forms, outline });
+    if (st.password && encrypt) bytes = await qpdf(bytes, ['--encrypt', st.password, st.password, '256', '--']);
     return bytes;
   } finally { b.close(); }
 }
@@ -640,6 +640,7 @@ function openMenu() {
     menuItem('drive', '드라이브에 새로 저장', saveToDriveNew, { disabled: !has }),
     navigator.canShare ? menuItem('share', '다른 앱으로 공유', shareFile, { disabled: !has }) : null,
     el('div', { class: 'menu-sep' }),
+    menuItem('printer', '인쇄', printDoc, { disabled: !has, hint: 'Ctrl+P' }),
     menuItem('layers', '페이지 편집 (회전·삭제·순서)', () => pageEditor(), { disabled: !has }),
     menuItem('merge', 'PDF 합치기', () => pageEditor(true), { disabled: !has }),
     menuItem('lock', S.password ? '암호 변경/해제' : '암호 걸기', setPassword, { disabled: !has }),
@@ -660,9 +661,95 @@ async function setPassword() {
 }
 async function closeDoc() { return closeTab(activeTab); }
 
+// ---------------- print ----------------
+/** "1-3, 5, 8-" → sorted 0-based page indexes (null if invalid) */
+function parseRange(txt, n) {
+  const out = new Set();
+  for (const part of txt.split(/[,\s]+/).filter(Boolean)) {
+    const m = part.match(/^(\d*)\s*[-~]\s*(\d*)$/) || part.match(/^(\d+)$/);
+    if (!m) return null;
+    const a = +(m[1] || 1), b = m.length > 2 ? +(m[2] || n) : a;
+    if (!a || !b || a > b || b > n) return null;
+    for (let i = a; i <= b; i++) out.add(i - 1);
+  }
+  return out.size ? [...out].sort((x, y) => x - y) : null;
+}
+async function printDoc() {
+  if (!S.pdfDoc) return;
+  const n = S.pdfDoc.numPages, cur = VW.viewer.currentPageNumber;
+  const radio = (v, label, checked) => el('label', { class: 'check' }, el('input', { type: 'radio', name: 'prRange', value: v, checked }), ' ' + label);
+  const custom = el('input', { class: 'input', placeholder: '예: 1-3, 5, 8', style: { marginTop: '6px' } });
+  const withAnn = el('input', { type: 'checkbox', checked: true });
+  const hasAnn = S.annots.some((l) => l?.length);
+  custom.addEventListener('focus', () => { body.querySelector('input[value=custom]').checked = true; });
+  const body = el('div', { class: 'print-opts' },
+    el('div', { class: 'field' }, el('span', {}, '인쇄 범위'),
+      el('div', { class: 'print-range' }, radio('all', `전체 (${n}쪽)`, true), radio('cur', `현재 쪽 (${cur}쪽)`), radio('custom', '쪽 지정'))),
+    custom,
+    hasAnn ? el('label', { class: 'check', style: { marginTop: '12px' } }, withAnn, ' 하이라이트·주석 함께 인쇄') : null,
+    el('div', { class: 'muted', style: { marginTop: '10px', fontSize: '12.5px' } }, '다음 화면에서 프린터, 매수, 용지, 양면을 고를 수 있어요.'));
+  let pages;
+  for (;;) {
+    const ok = await modal({ title: '인쇄', body, buttons: [{ label: '취소', value: false }, { label: '인쇄', value: true, primary: true }] });
+    if (!ok) return;
+    const mode = body.querySelector('input[name=prRange]:checked').value;
+    pages = mode === 'all' ? [...Array(n).keys()] : mode === 'cur' ? [cur - 1] : parseRange(custom.value, n);
+    if (pages) break;
+    toast(`쪽 번호를 확인해 주세요 (1~${n})`);
+  }
+  const b = busy('인쇄 준비 중…');
+  let doc = null;
+  const root = el('div', { id: 'printRoot' });
+  try {
+    const bytes = await exportBytes({ quiet: true, encrypt: false, annots: !hasAnn || withAnn.checked });
+    doc = await VW.pdfjsLib.getDocument({ ...VW.DOC_OPTS, data: bytes }).promise;
+    let land = 0;
+    for (const [k, i] of pages.entries()) {
+      b.set(`인쇄 준비 중… ${k + 1}/${pages.length}`);
+      const page = await doc.getPage(i + 1);
+      const vp1 = page.getViewport({ scale: 1 });
+      if (vp1.width > vp1.height) land++;
+      // ~200 dpi, capped so huge pages don't run out of memory
+      const scale = Math.min(200 / 72, 3600 / Math.max(vp1.width, vp1.height));
+      const vp = page.getViewport({ scale });
+      const c = document.createElement('canvas');
+      c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+      await page.render({ canvas: c, canvasContext: ctx, viewport: vp, annotationMode: VW.pdfjsLib.AnnotationMode.ENABLE_FORMS }).promise;
+      const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.92));
+      c.width = c.height = 0;
+      const img = el('img', { src: URL.createObjectURL(blob) });
+      root.append(el('div', { class: `print-page ${vp1.width > vp1.height ? 'land' : ''}` }, img));
+      page.cleanup();
+    }
+    await Promise.all([...root.querySelectorAll('img')].map((im) => im.decode().catch(() => {})));
+    const st = el('style', { id: 'printPageStyle' }, `@page { size: ${land > pages.length / 2 ? 'landscape' : 'portrait'}; margin: 0; }`);
+    document.head.append(st);
+    document.body.append(root);
+    document.body.classList.add('printing');
+    b.close();
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    window.print();
+  } catch (e) {
+    console.error(e);
+    toast('인쇄 준비 실패: ' + e.message);
+  } finally {
+    b.close();
+    // print() blocks until the dialog closes on desktop; on mobile it returns at once, so clean up after printing
+    const done = () => {
+      document.body.classList.remove('printing');
+      root.querySelectorAll('img').forEach((im) => URL.revokeObjectURL(im.src));
+      root.remove(); document.getElementById('printPageStyle')?.remove();
+      doc?.destroy();
+    };
+    if (matchMedia('(pointer: coarse)').matches) window.addEventListener('afterprint', done, { once: true }), setTimeout(done, 120000);
+    else done();
+  }
+}
 function showShortcuts() {
   const groups = [
-    ['파일·탭', [['Ctrl+O', '열기'], ['Ctrl+S', '저장'], ['Ctrl+1 ~ Ctrl+9', '1~9번째 탭으로'], ['Ctrl+Tab / Ctrl+PgDn', '다음 탭'], ['Ctrl+Shift+Tab / Ctrl+PgUp', '이전 탭']]],
+    ['파일·탭', [['Ctrl+O', '열기'], ['Ctrl+S', '저장'], ['Ctrl+P', '인쇄'], ['Ctrl+1 ~ Ctrl+9', '1~9번째 탭으로'], ['Ctrl+Tab / Ctrl+PgDn', '다음 탭'], ['Ctrl+Shift+Tab / Ctrl+PgUp', '이전 탭']]],
     ['보기', [['D', '화면 모드 (기본 → 흑백 반전 → 세피아)'], ['Ctrl+F', '검색'], ['Ctrl+휠', '확대·축소']]],
     ['도구', [['H', '이동(손)'], ['T', '텍스트 선택'], ['Y', '형광펜'], ['U', '밑줄'], ['P', '펜'], ['M', '마커'], ['E', '지우개'], ['X', '글상자'], ['Esc', '이동 도구로 / 선택 해제']]],
     ['편집', [['Ctrl+Z', '되돌리기'], ['Ctrl+Y / Ctrl+Shift+Z', '다시 실행'], ['Delete', '선택한 주석 삭제'], ['Ctrl+B', '글상자 굵게 (입력 중)']]],
@@ -1030,6 +1117,7 @@ document.addEventListener('keydown', (e) => {
   const key = /^Key[A-Z]$/.test(e.code) ? e.code.slice(3).toLowerCase() : e.key.toLowerCase();
   const mod = e.ctrlKey || e.metaKey;
   if (mod && key === 's') { e.preventDefault(); save(); return; }
+  if (mod && key === 'p') { e.preventDefault(); if (S.pdfDoc) printDoc(); return; }
   if (mod && key === 'o') { e.preventDefault(); openLocal(); return; }
   if (mod && key === 'f') { e.preventDefault(); openSearch(); return; }
   if (mod && !e.shiftKey && !e.altKey && /^[1-9]$/.test(e.key) && tabs.length) { e.preventDefault(); switchTab(tabs[+e.key - 1]); return; }
