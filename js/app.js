@@ -10,7 +10,7 @@ import { pickSignature } from './sign.js';
 import { initAI, toggleAI, aiBusy } from './ai.js';
 import * as OL from './outline.js';
 
-const APP_VERSION = '1.16.1';
+const APP_VERSION = '1.16.2';
 const container = $('#viewerContainer');
 
 // ---------------- icons ----------------
@@ -963,7 +963,7 @@ $('#btnMenu').onclick = openMenu;
 $('#btnPanel').onclick = () => togglePanel();
 // don't leave chrome buttons focused after a mouse/touch click (keyboard shortcuts would re-trigger them and draw a focus ring)
 document.addEventListener('click', (e) => {
-  const b = e.target.closest?.('button');
+  const b = e.target.closest?.('button, input[type=checkbox], label.check');
   if (b && e.detail > 0 && b.closest('#topbar, #toolbar, #zoomCtl, #tabBar, #toolOptions, #panelTabs, #sidePanel')) b.blur();
 }, true);
 $('#btnAI').onclick = () => toggleAI();
@@ -1023,23 +1023,27 @@ async function checkResume() {
 
 // ---------------- keyboard ----------------
 document.addEventListener('keydown', (e) => {
-  const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName) || document.activeElement?.isContentEditable;
+  const ae = document.activeElement;
+  // checkboxes, sliders and colour pickers don't take text, so they must not swallow shortcuts
+  const typing = (ae?.tagName === 'INPUT' && !/^(checkbox|radio|range|color|button)$/.test(ae.type)) || /TEXTAREA|SELECT/.test(ae?.tagName) || ae?.isContentEditable;
+  // letter keys by physical key, so they work with the Korean IME on (ㅛ → Y)
+  const key = /^Key[A-Z]$/.test(e.code) ? e.code.slice(3).toLowerCase() : e.key.toLowerCase();
   const mod = e.ctrlKey || e.metaKey;
-  if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); save(); return; }
-  if (mod && e.key.toLowerCase() === 'o') { e.preventDefault(); openLocal(); return; }
-  if (mod && e.key.toLowerCase() === 'f') { e.preventDefault(); openSearch(); return; }
+  if (mod && key === 's') { e.preventDefault(); save(); return; }
+  if (mod && key === 'o') { e.preventDefault(); openLocal(); return; }
+  if (mod && key === 'f') { e.preventDefault(); openSearch(); return; }
   if (mod && !e.shiftKey && !e.altKey && /^[1-9]$/.test(e.key) && tabs.length) { e.preventDefault(); switchTab(tabs[+e.key - 1]); return; }
   if (mod && e.key === 'Tab') { e.preventDefault(); cycleTab(e.shiftKey ? -1 : 1); return; }
   if (mod && (e.key === 'PageDown' || e.key === 'PageUp')) { e.preventDefault(); cycleTab(e.key === 'PageDown' ? 1 : -1); return; }
   if (typing || document.querySelector('.modal-back')) return;
-  if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); AN.undo(); return; }
-  if (mod && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) { e.preventDefault(); AN.redo(); return; }
+  if (mod && key === 'z' && !e.shiftKey) { e.preventDefault(); AN.undo(); return; }
+  if (mod && (key === 'y' || (key === 'z' && e.shiftKey))) { e.preventDefault(); AN.redo(); return; }
   if ((e.key === 'Delete' || e.key === 'Backspace') && S.selected) { e.preventDefault(); AN.deleteSelected(); return; }
   if (e.key === 'Escape') { if (S.tool !== 'hand') selectTool('hand'); else AN.deselect(); }
-  if (!mod && !e.altKey && e.key === 'd' && S.pdfDoc) { cycleViewMode(); return; }
+  if (!mod && !e.altKey && key === 'd' && S.pdfDoc) { cycleViewMode(); return; }
   if (!mod && !e.altKey && e.key === '?') { showShortcuts(); return; }
   const map = { h: 'hand', t: 'text', y: 'highlight', u: 'underline', p: 'pen', m: 'marker', e: 'eraser', x: 'freetext' };
-  if (!mod && !e.altKey && map[e.key] && S.pdfDoc) onToolClick(map[e.key]);
+  if (!mod && !e.altKey && !e.shiftKey && map[key] && S.pdfDoc) { e.preventDefault(); onToolClick(map[key]); }
 });
 window.addEventListener('beforeunload', (e) => { if (S.dirty || tabs.some((t) => stOf(t).dirty)) { persistState.flush(); e.preventDefault(); e.returnValue = ''; } });
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') persistState.flush(); });
