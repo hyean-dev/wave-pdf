@@ -160,7 +160,8 @@ function rectFromCorners(p) {
     }
     acc += d;
   }
-  const n = R.length, W = 6, at = (i) => R[((i % n) + n) % n];
+  // window scales with the short side so the two corners of a flat box don't blur into one
+  const n = R.length, W = Math.max(2, Math.min(6, Math.round(Math.min(w, h) / step / 3))), at = (i) => R[((i % n) + n) % n];
   const turn = [], sign = [];
   for (let i = 0; i < n; i++) {
     const a = at(i - W), b = at(i), c = at(i + W);
@@ -174,7 +175,7 @@ function rectFromCorners(p) {
   for (let i = 0; i < n; i++) {
     if (turn[i] < 0.8) continue;
     let top = true;
-    for (let k = -6; k <= 6; k++) if (k && (turn[(i + k + n) % n] > turn[i] || (turn[(i + k + n) % n] === turn[i] && k < 0))) { top = false; break; }
+    for (let k = -W; k <= W; k++) if (k && (turn[(i + k + n) % n] > turn[i] || (turn[(i + k + n) % n] === turn[i] && k < 0))) { top = false; break; }
     if (top) peaks.push(i);
   }
   if (peaks.length !== 4 || new Set(peaks.map((i) => sign[i])).size !== 1) return null;
