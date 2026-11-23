@@ -39,20 +39,11 @@ export function recognize(p) {
       return { kind: 'arrow', a, b };
     }
   }
-  // --- rectangle (axis-aligned): closed, hugs its bounding box, and visits all four corners ---
-  {
-    const xs = p.map((q) => q[0]), ys = p.map((q) => q[1]);
-    const x1 = Math.min(...xs), x2 = Math.max(...xs), y1 = Math.min(...ys), y2 = Math.max(...ys);
-    const w = x2 - x1, h = y2 - y1, m = Math.min(w, h);
-    const per = 2 * (w + h), L = pathLen(p);
-    if (Math.max(w, h) >= 20 && m >= 8 && dist(p[0], p[p.length - 1]) <= 0.3 * Math.max(w, h) && L >= 0.85 * per && L <= 1.3 * per) {
-      const tol = Math.max(3, 0.14 * m);
-      const near = p.filter((q) => Math.min(q[0] - x1, x2 - q[0], q[1] - y1, y2 - q[1]) <= tol).length / p.length;
-      const cr = Math.max(4, 0.22 * m);
-      const corners = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]].every((c) => p.some((q) => dist(q, c) <= cr));
-      if (near >= 0.9 && corners) return { kind: 'rect', x1, y1, x2, y2 };
-    }
-  }
+  // --- rectangle: closed stroke with four clear corners (each turning ~90°), so a quickly drawn box with
+  //     slightly rounded or uneven corners still counts; a round shape has no corners and stays an ellipse ---
+  const box = rectFromCorners(p);
+  if (box === false) return null; // four corners but not a level box (diamond, tilted): leave it hand-drawn
+  if (box) return box;
   // --- ellipse ---
   const xs = p.map((q) => q[0]), ys = p.map((q) => q[1]);
   const x1 = Math.min(...xs), x2 = Math.max(...xs), y1 = Math.min(...ys), y2 = Math.max(...ys);
@@ -140,4 +131,67 @@ export function stabilize(pts, sigma) {
   let idx = 0;
   for (let c = 0; c < cuts.length - 1; c++) for (let i = cuts[c] + (c ? 1 : 0); i <= cuts[c + 1]; i++, idx++) if (keep.has(i) || i % 2 === 0) res.push(out[idx]);
   return res;
+}
+
+/** closed stroke → 4 corner peaks in turning angle → axis-aligned box (null if it isn't box-like) */
+function rectFromCorners(p) {
+  // the pen often runs a bit past the start when closing: cut that overlap
+  const half = Math.floor(p.length / 2);
+  let k = p.length - 1, kd = dist(p[0], p[k]);
+  for (let i = half; i < p.length; i++) { const d = dist(p[0], p[i]); if (d < kd) { kd = d; k = i; } }
+  p = p.slice(0, k + 1);
+  const L = pathLen(p);
+  const xs = p.map((q) => q[0]), ys = p.map((q) => q[1]);
+  const x1 = Math.min(...xs), x2 = Math.max(...xs), y1 = Math.min(...ys), y2 = Math.max(...ys);
+  const w = x2 - x1, h = y2 - y1;
+  if (Math.max(w, h) < 20 || Math.min(w, h) < 8 || dist(p[0], p[p.length - 1]) > 0.3 * Math.max(w, h)) return null;
+  if (L < 0.8 * 2 * (w + h) || L > 1.4 * 2 * (w + h)) return null;
+  // resample the closed loop into N even steps
+  const N = 96, step = L / N, R = [p[0]];
+  let acc = 0;
+  for (let i = 1; i < p.length && R.length < N; i++) {
+    let a = p[i - 1];
+    const b = p[i];
+    let d = dist(a, b);
+    while (acc + d >= step && R.length < N) {
+      const t = (step - acc) / d;
+      a = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+      R.push(a); d = dist(a, b); acc = 0;
+    }
+    acc += d;
+  }
+  const n = R.length, W = 6, at = (i) => R[((i % n) + n) % n];
+  const turn = [], sign = [];
+  for (let i = 0; i < n; i++) {
+    const a = at(i - W), b = at(i), c = at(i + W);
+    const ax = b[0] - a[0], ay = b[1] - a[1], bx = c[0] - b[0], by = c[1] - b[1];
+    const la = Math.hypot(ax, ay), lb = Math.hypot(bx, by);
+    turn.push(la && lb ? Math.acos(Math.max(-1, Math.min(1, (ax * bx + ay * by) / (la * lb)))) : 0);
+    sign.push(Math.sign(ax * by - ay * bx));
+  }
+  // corner = local max of turning above ~45°, at least 1/12 of the loop apart
+  const peaks = [];
+  for (let i = 0; i < n; i++) {
+    if (turn[i] < 0.8) continue;
+    let top = true;
+    for (let k = -6; k <= 6; k++) if (k && (turn[(i + k + n) % n] > turn[i] || (turn[(i + k + n) % n] === turn[i] && k < 0))) { top = false; break; }
+    if (top) peaks.push(i);
+  }
+  if (peaks.length !== 4 || new Set(peaks.map((i) => sign[i])).size !== 1) return null;
+  // a level box passes close by all four of its bounding-box corners (a rounded corner by ~0.4·radius);
+  // a diamond or tilted box leaves at least one of them far away
+  const lim = 0.15 * Math.min(w, h) + 4;
+  const level = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]].every((c) => R.some((q) => dist(q, c) <= lim));
+  // the 4 sides between corners must be fairly straight
+  for (let k = 0; k < 4; k++) {
+    const s0 = peaks[k], s1 = peaks[(k + 1) % 4];
+    const side = [];
+    for (let i = s0; i !== s1; i = (i + 1) % n) side.push(R[i]);
+    side.push(R[s1]);
+    const D = dist(R[s0], R[s1]);
+    if (D < 6 || maxDev(side, R[s0], R[s1]) > Math.max(4, 0.2 * D)) return null;
+  }
+  // the corners should sit near the box corners (rules out diamonds and tilted boxes)
+  if (!level) return false;
+  return { kind: 'rect', x1, y1, x2, y2 };
 }
