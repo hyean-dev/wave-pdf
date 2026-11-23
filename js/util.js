@@ -103,6 +103,12 @@ export function withTimeout(p, ms, msg) {
 }
 
 export function downloadBlob(blob, name) {
+  if (window.Capacitor?.isNativePlatform?.()) {
+    // the APK has no downloads folder flow: ask where to save
+    blob.arrayBuffer().then((b) => import('./native.js').then((N) => N.saveAs(name, new Uint8Array(b))))
+      .then(() => toast('저장했어요')).catch((e) => { if (e?.message !== 'CANCELLED') toast('저장 실패: ' + e.message); });
+    return;
+  }
   const url = URL.createObjectURL(blob);
   const a = el('a', { href: url, download: name });
   document.body.append(a); a.click(); a.remove();

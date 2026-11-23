@@ -1,0 +1,6 @@
+{
+  "appId": "io.github.hyeandev.wavepdf",
+  "appName": "Wave PDF",
+  "webDir": "www",
+  "android": { "allowMixedContent": false }
+}

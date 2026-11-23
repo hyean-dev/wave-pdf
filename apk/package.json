@@ -1,0 +1,15 @@
+{
+  "name": "wave-pdf-android",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "sync-web": "node copy-web.mjs && npx cap sync android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.6.2",
+    "@capacitor/core": "^8.6.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.6.2"
+  }
+}
