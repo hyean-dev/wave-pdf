@@ -689,9 +689,9 @@ function onUp(e) {
       const sh = snapOn ? recognize(pp) : null;
       if (!sh || (g.tool === 'marker' && sh.kind !== 'line')) break;
       // second step, so one undo brings the hand-drawn stroke back
-      const a = sh.kind === 'arrow' ? arrow(sh.a, sh.b) : ink(sh.kind === 'line' ? [sh.a, sh.b] : ellipsePoints(sh));
+      const a = sh.kind === 'arrow' ? arrow(sh.a, sh.b) : ink(sh.kind === 'line' ? [sh.a, sh.b] : sh.kind === 'rect' ? [[sh.x1, sh.y1], [sh.x2, sh.y1], [sh.x2, sh.y1], [sh.x2, sh.y2], [sh.x2, sh.y2], [sh.x1, sh.y2], [sh.x1, sh.y2], [sh.x1, sh.y1], [sh.x1, sh.y1]] : ellipsePoints(sh));
       swap(raw.id, a);
-      if (sh.kind !== 'ellipse') lastSnap = { page: g.p, id: a.id, kind: sh.kind, a: sh.a, b: sh.b, t: Date.now() };
+      if (sh.kind === 'line' || sh.kind === 'arrow') lastSnap = { page: g.p, id: a.id, kind: sh.kind, a: sh.a, b: sh.b, t: Date.now() };
       break;
     }
     case 'shape': {

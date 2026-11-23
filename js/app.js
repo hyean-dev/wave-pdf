@@ -10,7 +10,7 @@ import { pickSignature } from './sign.js';
 import { initAI, toggleAI, aiBusy } from './ai.js';
 import * as OL from './outline.js';
 
-const APP_VERSION = '1.17.0';
+const APP_VERSION = '1.17.1';
 const container = $('#viewerContainer');
 
 // ---------------- icons ----------------

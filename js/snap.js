@@ -39,6 +39,20 @@ export function recognize(p) {
       return { kind: 'arrow', a, b };
     }
   }
+  // --- rectangle (axis-aligned): closed, hugs its bounding box, and visits all four corners ---
+  {
+    const xs = p.map((q) => q[0]), ys = p.map((q) => q[1]);
+    const x1 = Math.min(...xs), x2 = Math.max(...xs), y1 = Math.min(...ys), y2 = Math.max(...ys);
+    const w = x2 - x1, h = y2 - y1, m = Math.min(w, h);
+    const per = 2 * (w + h), L = pathLen(p);
+    if (Math.max(w, h) >= 20 && m >= 8 && dist(p[0], p[p.length - 1]) <= 0.3 * Math.max(w, h) && L >= 0.85 * per && L <= 1.3 * per) {
+      const tol = Math.max(3, 0.14 * m);
+      const near = p.filter((q) => Math.min(q[0] - x1, x2 - q[0], q[1] - y1, y2 - q[1]) <= tol).length / p.length;
+      const cr = Math.max(4, 0.22 * m);
+      const corners = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]].every((c) => p.some((q) => dist(q, c) <= cr));
+      if (near >= 0.9 && corners) return { kind: 'rect', x1, y1, x2, y2 };
+    }
+  }
   // --- ellipse ---
   const xs = p.map((q) => q[0]), ys = p.map((q) => q[1]);
   const x1 = Math.min(...xs), x2 = Math.max(...xs), y1 = Math.min(...ys), y2 = Math.max(...ys);
