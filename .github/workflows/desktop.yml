@@ -1,0 +1,46 @@
+name: Windows app
+
+on:
+  push:
+    branches: [main]
+    paths: ['index.html', 'js/**', 'css/**', 'vendor/**', 'fonts/**', 'icons/**', 'desktop/**', '.github/workflows/desktop.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: '22' }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: desktop/src-tauri }
+      - name: Web files + version
+        working-directory: desktop
+        shell: bash
+        run: |
+          npm ci --no-audit --no-fund
+          node copy-web.mjs
+          V=$(grep -oP "APP_VERSION = '\K[^']+" ../js/app.js)
+          node -e "const f='src-tauri/tauri.conf.json',c=JSON.parse(require('fs').readFileSync(f));c.version='$V';require('fs').writeFileSync(f,JSON.stringify(c,null,2))"
+          echo "V=$V" >> $GITHUB_ENV
+      - name: Build installer
+        working-directory: desktop
+        run: npx tauri build
+      - name: Publish (release "desktop-latest")
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp desktop/src-tauri/target/release/bundle/nsis/*-setup.exe WavePDF-Setup.exe
+          gh release delete desktop-latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create desktop-latest WavePDF-Setup.exe --title "Wave PDF 윈도우 앱 (v$V)" \
+            --notes "PC용 설치 파일. 받아서 실행하면 설치돼요. 버전 $V" --latest=false

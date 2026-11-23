@@ -11,7 +11,7 @@ import { initAI, toggleAI, aiBusy } from './ai.js';
 import * as OL from './outline.js';
 import * as NV from './native.js';
 
-const APP_VERSION = '1.18.0';
+const APP_VERSION = '1.19.0';
 const container = $('#viewerContainer');
 
 // ---------------- icons ----------------
@@ -194,7 +194,7 @@ const DOC_KEYS = ['pdfDoc', 'baseBytes', 'baseVer', 'fileName', 'source', 'annot
 const emptyDoc = () => ({ pdfDoc: null, baseBytes: null, baseVer: 0, fileName: '', source: null, annots: [], images: {}, password: null, dirty: false, outline: null, outlineDirty: false, outlineAuto: false, outlineDoc: null, prevOutline: undefined, rev: 0 });
 const tabs = [];
 let activeTab = null, tabSeq = 0, switching = false;
-const openMode = () => (NV.NATIVE ? 'tab' : localStorage.getItem('openMode') || 'tab');
+const openMode = () => (NV.NO_DRIVE ? 'tab' : localStorage.getItem('openMode') || 'tab');
 const pickDoc = (src) => Object.fromEntries(DOC_KEYS.map((k) => [k, src[k]]));
 const stOf = (t) => (t === activeTab ? S : t.st);
 /** save the active tab's document state out of S */
@@ -313,7 +313,7 @@ function renderTabs() {
   bar.querySelector('.tab.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 async function openAnother() {
-  if (NV.NATIVE) return openLocal();
+  if (NV.NO_DRIVE) return openLocal();
   const where = await modal({ title: '다른 PDF 열기', buttons: [{ label: '취소', value: null }, { label: '구글 드라이브', value: 'drive' }, { label: '내 기기', value: 'local', primary: true }] });
   if (where === 'local') openLocal();
   if (where === 'drive') openDrive();
@@ -322,7 +322,7 @@ function tabMenu(t, anchor) {
   document.querySelector('.bm-menu')?.remove();
   const go = (fn) => () => { menu.remove(); fn(); };
   const menu = el('div', { class: 'ctx-menu bm-menu' }, el('div', { class: 'bm-menu-list' },
-    el('button', { class: 'menu-item', onclick: go(() => moveTabToWindow(t)) }, '새 창으로 옮기기'),
+    NV.NO_DRIVE ? null : el('button', { class: 'menu-item', onclick: go(() => moveTabToWindow(t)) }, '새 창으로 옮기기'),
     el('button', { class: 'menu-item', onclick: go(() => closeTab(t)) }, '이 탭 닫기'),
     el('button', { class: 'menu-item', disabled: tabs.length < 2, onclick: go(async () => { for (const o of [...tabs]) if (o !== t && !(await closeTab(o))) break; }) }, '다른 탭 모두 닫기')));
   document.body.append(menu);
@@ -452,7 +452,7 @@ async function pickDriveBytes() {
   return { bytes, name: f.name };
 }
 async function pickPdfAny() {
-  if (NV.NATIVE) return pickLocalBytes();
+  if (NV.NO_DRIVE) return pickLocalBytes();
   const where = await modal({ title: '어디서 PDF를 가져올까요?', buttons: [{ label: '취소', value: null }, { label: '구글 드라이브', value: 'drive' }, { label: '내 기기', value: 'local', primary: true }] });
   if (where === 'local') return pickLocalBytes();
   if (where === 'drive') return pickDriveBytes();
@@ -492,6 +492,11 @@ async function save() {
       if (S.rev !== rev) { scheduleAutoSave(); return; }
       setStatus('저장됨');
       return markSaved('드라이브에 저장했어요');
+    }
+    if (src.type === 'path' && NV.DESKTOP) {
+      const bytes = await exportBytes();
+      await NV.writePath(src.path, bytes);
+      return markSaved('저장했어요');
     }
     if (src.type === 'native') {
       const bytes = await exportBytes();
@@ -598,7 +603,7 @@ async function shareFile() {
 }
 /** used by page editor "추출" */
 async function exportTo(bytes, name) {
-  if (NV.NATIVE) return downloadBlob(new Blob([bytes], { type: 'application/pdf' }), name);
+  if (NV.NO_DRIVE) return downloadBlob(new Blob([bytes], { type: 'application/pdf' }), name);
   const where = await modal({ title: '추출한 PDF를 어디에 저장할까요?', buttons: [{ label: '취소', value: null }, { label: '구글 드라이브', value: 'drive' }, { label: '내 기기', value: 'local', primary: true }] });
   if (where === 'local') downloadBlob(new Blob([bytes], { type: 'application/pdf' }), name);
   if (where === 'drive') {
@@ -652,15 +657,15 @@ function openMenu() {
   closeSheet();
   const has = !!S.pdfDoc;
   const src = S.source || {};
-  const saveHint = src.type === 'drive' ? '드라이브 원본' : src.handle || src.type === 'native' ? '원본 파일' : '다운로드';
+  const saveHint = src.type === 'drive' ? '드라이브 원본' : src.handle || src.type === 'native' || src.type === 'path' ? '원본 파일' : '다운로드';
   const sheet = el('div', { class: 'sheet' },
     el('div', { class: 'sheet-title' }, 'Wave PDF'),
     menuItem('device', '내 기기에서 열기', openLocal),
-    NV.NATIVE ? null : menuItem('drive', '구글 드라이브에서 열기', openDrive),
+    NV.NO_DRIVE ? null : menuItem('drive', '구글 드라이브에서 열기', openDrive),
     el('div', { class: 'menu-sep' }),
     menuItem('save', '저장', save, { disabled: !has, hint: saveHint }),
     menuItem('download', '기기에 다른 이름으로 저장', () => saveToDevice().catch((e) => toast(e.message)), { disabled: !has }),
-    NV.NATIVE ? null : menuItem('drive', '드라이브에 새로 저장', saveToDriveNew, { disabled: !has }),
+    NV.NO_DRIVE ? null : menuItem('drive', '드라이브에 새로 저장', saveToDriveNew, { disabled: !has }),
     NV.NATIVE || navigator.canShare ? menuItem('share', NV.NATIVE ? '다른 앱으로 보내기 (드라이브에 올리기 등)' : '다른 앱으로 공유', shareFile, { disabled: !has }) : null,
     el('div', { class: 'menu-sep' }),
     NV.NATIVE ? null : menuItem('printer', '인쇄', printDoc, { disabled: !has, hint: 'Ctrl+P' }),
@@ -792,12 +797,12 @@ async function openSettings() {
   const signed = DR.isSignedIn();
   const body = el('div', { class: 'settings' },
     el('label', { class: 'field' }, el('span', {}, '주석 작성자 이름'), author),
-    NV.NATIVE ? null : el('label', { class: 'field' }, el('span', {}, 'PDF를 하나 더 열 때'), om),
+    NV.NO_DRIVE ? null : el('label', { class: 'field' }, el('span', {}, 'PDF를 하나 더 열 때'), om),
     el('label', { class: 'check' }, penOnly, ' 그리기 도구는 스타일러스로만 (손가락은 스크롤)'),
-    NV.NATIVE ? null : el('label', { class: 'check', style: { marginTop: '8px' } }, autoDrive, ' 드라이브 파일은 변경 후 자동 저장'),
+    NV.NO_DRIVE ? null : el('label', { class: 'check', style: { marginTop: '8px' } }, autoDrive, ' 드라이브 파일은 변경 후 자동 저장'),
     el('label', { class: 'check', style: { marginTop: '8px' } }, autoHide, ' 스크롤하면 아래 도구 막대 자동 숨김'),
     el('label', { class: 'check', style: { marginTop: '8px' } }, autoBm, ' 책갈피 없는 PDF는 열 때 자동으로 만들기'),
-    NV.NATIVE ? null : el('div', { class: 'field' }, el('span', {}, '구글 드라이브'),
+    NV.NO_DRIVE ? null : el('div', { class: 'field' }, el('span', {}, '구글 드라이브'),
       el('div', { class: 'row gap' },
         el('button', { class: 'btn small', onclick: () => DR.setupGuide() }, DR.isConfigured() ? '클라이언트 ID 변경' : '연결 설정'),
         signed ? el('button', { class: 'btn small', onclick: (e) => { DR.signOut(); e.target.remove(); toast('로그아웃했어요'); } }, '로그아웃') : null)),
@@ -1087,6 +1092,14 @@ $('#docTitle').onclick = async () => {
 };
 $('#wlOpen').onclick = openLocal;
 $('#wlDrive').onclick = openDrive;
+if (NV.DESKTOP) {
+  $('#wlDrive').remove();
+  document.body.classList.add('desktop');
+  NV.onDesktopFiles((f, err) => {
+    if (!f) return toast('파일을 열 수 없어요: ' + err);
+    openBytes(f.bytes, f.name, { type: 'path', path: f.path }, { target: S.pdfDoc ? 'tab' : undefined });
+  });
+}
 if (NV.NATIVE) {
   $('#wlDrive').remove();
   document.body.classList.add('native');
@@ -1180,7 +1193,7 @@ window.addEventListener('drop', async (e) => {
 // ---------------- startup ----------------
 selectTool('hand');
 DR.preload();
-if (!NV.NATIVE && 'serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => {});
+if (!NV.NO_DRIVE && 'serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => {});
 
 let incoming = false;
 if ('launchQueue' in window) {
