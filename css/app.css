@@ -553,3 +553,4 @@ body.view-dark kbd { background: #262e36; border-color: #3a444e; }
 .tab.dragging { opacity: .45; }
 .tab-ghost { position: fixed; left: 0; top: 0; z-index: 9999; pointer-events: none; max-width: 240px; padding: 7px 12px; border-radius: 9px; background: var(--bg, #fff); color: var(--text); font-size: 13px; font-weight: 600; box-shadow: 0 6px 20px rgba(0,0,0,.25); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tab-ghost.out::after { content: attr(data-hint); display: block; font-size: 11.5px; font-weight: 500; color: var(--accent-2); margin-top: 2px; }
+.ai-head .ai-model { flex: 1 1 auto; min-width: 0; }

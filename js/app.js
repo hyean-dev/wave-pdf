@@ -11,7 +11,7 @@ import { initAI, toggleAI, aiBusy } from './ai.js';
 import * as OL from './outline.js';
 import * as NV from './native.js';
 
-const APP_VERSION = '1.20.0';
+const APP_VERSION = '1.20.1';
 const container = $('#viewerContainer');
 
 // ---------------- icons ----------------
@@ -245,7 +245,6 @@ async function activate(t) {
 async function switchTab(t) {
   if (!t || t === activeTab || switching) return;
   if (document.querySelector('.busy')) return;
-  if (aiBusy()) return toast('Claude 답변이 끝난 뒤에 탭을 바꿀 수 있어요');
   switching = true;
   try { stashActive(); await activate(t); }
   catch (e) { console.error(e); toast('탭 전환 실패: ' + e.message); }

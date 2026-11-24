@@ -26,28 +26,40 @@ const SYSTEM = `너는 PDF 문서를 함께 읽는 금융 실무 보조자다. �
 - 딜의 승인 여부·투자 판단 같은 결론은 먼저 내리지 않는다. 요청받으면 근거와 함께 쟁점만 정리한다.
 - 표는 마크다운 표로 쓴다.`;
 
-let ctx = null;          // {docKey, block, pages, mode}
-let history = [];        // [{role, content}]
-let busy = false;
 let panel, list, input;
 
-// chat is kept per document (tabs)
-const perDoc = new WeakMap();
-let curDoc = null;
+// One chat per document (tab). A running answer keeps writing into its own document's chat even after
+// switching tabs; highlights found for a document that isn't on screen are added when it comes back.
+const sessions = new WeakMap();
+const blank = () => ({ doc: null, ctx: null, history: [], busy: false, pendingAnn: [], list: null });
+let sess = blank();
+function newList() {
+  const l = el('div', { class: 'ai-list' });
+  l.addEventListener('click', (e) => { const a = e.target.closest('a.pg'); if (a) goToPage(+a.dataset.p); });
+  return l;
+}
+function show(s) {
+  sess = s;
+  if (!panel) return;
+  const old = list;
+  if (!s.list) { s.list = newList(); renderEmpty(); }
+  if (old && old !== s.list && panel.contains(old)) old.replaceWith(s.list);
+  list = s.list;
+}
 on('docloaded', (doc) => {
-  if (curDoc && curDoc !== doc) perDoc.set(curDoc, { ctx, history, nodes: list ? [...list.children] : [] });
-  curDoc = doc;
-  const s = perDoc.get(doc);
-  ctx = s?.ctx || null; history = s?.history || [];
-  if (list) { if (history.length && s.nodes.length) list.replaceChildren(...s.nodes); else renderEmpty(); }
+  let s = sessions.get(doc);
+  if (!s) { s = { ...blank(), doc }; sessions.set(doc, s); }
+  show(s);
+  if (s.pendingAnn.length && S.pdfDoc === doc) { addAnnotations(s.pendingAnn); toast(`Claude가 찾은 ${s.pendingAnn.length}곳을 하이라이트했어요`); s.pendingAnn = []; }
 });
-export const aiBusy = () => busy;
+export const aiBusy = () => sess.busy;
 
 // ---------------- document context ----------------
-async function buildContext() {
-  const doc = S.pdfDoc;
-  const key = S.baseVer + ':' + doc.numPages;
-  if (ctx?.docKey === key) return ctx;
+async function buildContext(s, snap) {
+  const doc = snap.doc;
+  const key = snap.ver + ':' + doc.numPages;
+  if (s.ctx?.docKey === key) return s.ctx;
+  let ctx;
   let text = '', total = 0;
   const pages = [];
   for (let i = 1; i <= doc.numPages; i++) {
@@ -59,12 +71,12 @@ async function buildContext() {
     total += t.length;
   }
   const LIMIT = 280000;
-  if (total < 40 * doc.numPages && S.baseBytes.length < 25 * 1024 * 1024) {
+  if (total < 40 * doc.numPages && snap.bytes.length < 25 * 1024 * 1024) {
     // scanned / image PDF → send the PDF itself
     let bin = '';
-    const b = S.baseBytes;
+    const b = snap.bytes;
     for (let i = 0; i < b.length; i += 0x8000) bin += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
-    ctx = { docKey: key, pages, mode: 'pdf', block: { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: btoa(bin) }, title: S.fileName, cache_control: { type: 'ephemeral' } } };
+    ctx = { docKey: key, pages, mode: 'pdf', block: { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: btoa(bin) }, title: snap.name, cache_control: { type: 'ephemeral' } } };
   } else {
     let used = 0;
     for (let i = 0; i < pages.length; i++) {
@@ -72,9 +84,9 @@ async function buildContext() {
       if (used + chunk.length > LIMIT) { text += `\n\n[문서가 길어 ${i + 1}쪽부터는 생략됨]`; break; }
       text += chunk; used += chunk.length;
     }
-    ctx = { docKey: key, pages, mode: 'text', block: { type: 'text', text: `<document name="${S.fileName}" pages="${doc.numPages}">${text}\n</document>`, cache_control: { type: 'ephemeral' } } };
+    ctx = { docKey: key, pages, mode: 'text', block: { type: 'text', text: `<document name="${snap.name}" pages="${doc.numPages}">${text}\n</document>`, cache_control: { type: 'ephemeral' } } };
   }
-  return ctx;
+  return (s.ctx = ctx);
 }
 
 // ---------------- API ----------------
@@ -178,7 +190,8 @@ function tablesToTSV(src) {
 }
 
 // ---------------- UI ----------------
-function bubble(role, text = '') {
+function bubble(s, role, text = '') {
+  const list = s.list;
   const b = el('div', { class: `ai-msg ${role}` });
   const body = el('div', { class: 'ai-body' });
   b.append(body);
@@ -197,7 +210,7 @@ function finishBubble({ b, body }, text) {
 async function copy(t, msg) { try { await navigator.clipboard.writeText(t); toast(msg); } catch { toast('복사하지 못했어요'); } }
 
 function renderEmpty() {
-  list.replaceChildren(el('div', { class: 'ai-empty' },
+  sess.list.replaceChildren(el('div', { class: 'ai-empty' },
     getKey() ? (S.pdfDoc ? '열린 문서에 대해 물어보거나 아래 버튼을 눌러 보세요.' : '먼저 PDF를 여세요.')
       : el('div', {}, '설정에서 Claude API 키를 넣으면 쓸 수 있어요. ', el('button', { class: 'btn small', onclick: keyDialog }, 'API 키 입력'))));
 }
@@ -205,13 +218,14 @@ function renderEmpty() {
 export function initAI() {
   input = el('textarea', { class: 'ai-input', rows: 2, placeholder: '문서에 대해 질문하기 (Enter 전송, Shift+Enter 줄바꿈)' });
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); ask(input.value); } });
-  list = el('div', { class: 'ai-list' });
+  sess.list = sess.list || newList();
+  list = sess.list;
   const modelSel = el('select', { class: 'ai-model', onchange: (e) => setModel(e.target.value) }, MODELS.map(([v, l]) => el('option', { value: v, selected: v === getModel() }, l)));
   panel = el('aside', { id: 'aiPanel', hidden: true },
     el('div', { class: 'ai-head' },
       el('span', { class: 'ai-title', html: `${icon('sparkles')} Claude` }), modelSel,
       el('button', { class: 'icon dark', title: 'API 키', html: icon('key'), onclick: keyDialog }),
-      el('button', { class: 'icon dark', title: '대화 지우기', html: icon('trash'), onclick: () => { history = []; renderEmpty(); } }),
+      el('button', { class: 'icon dark', title: '대화 지우기', html: icon('trash'), onclick: () => { if (sess.busy) return toast('답변이 끝난 뒤에 지울 수 있어요'); sess.history = []; sess.ctx = null; renderEmpty(); } }),
       el('button', { class: 'icon dark', title: '닫기', html: icon('x'), onclick: () => toggleAI(false) })),
     el('div', { class: 'ai-quick' },
       el('button', { class: 'btn small', onclick: () => ask('이 문서를 요약해줘. 거래 구조, 차주·담보·상환재원, 주요 조건(금액·금리·만기·약정), 확인이 필요한 쟁점 순서로.') }, '요약'),
@@ -220,14 +234,13 @@ export function initAI() {
     list,
     el('div', { class: 'ai-compose' }, input, el('button', { class: 'icon dark ai-send', title: '보내기', html: icon('send'), onclick: () => ask(input.value) })));
   document.querySelector('#main').append(panel);
-  list.addEventListener('click', (e) => { const a = e.target.closest('a.pg'); if (a) goToPage(+a.dataset.p); });
-  renderEmpty();
+  if (!sess.history.length) renderEmpty();
 }
 export function toggleAI(force) {
   const open = force ?? panel.hidden;
   panel.hidden = !open;
   document.body.classList.toggle('ai-open', open);
-  if (open) { if (!history.length) renderEmpty(); setTimeout(() => input.focus(), 50); }
+  if (open) { if (!sess.history.length && !sess.busy) renderEmpty(); setTimeout(() => input.focus(), 50); }
 }
 
 async function keyDialog() {
@@ -242,36 +255,39 @@ async function keyDialog() {
   if (v == null) return;
   setKey(v);
   toast(v ? 'API 키를 저장했어요' : 'API 키를 지웠어요');
-  if (!history.length) renderEmpty();
+  if (!sess.history.length && !sess.busy) renderEmpty();
 }
 
 async function ask(q, { maxTokens = 16000 } = {}) {
   q = (q || '').trim();
-  if (!q || busy) return;
+  const s = sess;
+  if (!q) return;
+  if (s.busy) return toast('이 문서의 답변이 끝난 뒤에 물어볼 수 있어요');
   if (!S.pdfDoc) return toast('먼저 PDF를 여세요');
   if (!getKey()) return keyDialog();
-  busy = true;
+  const snap = { doc: S.pdfDoc, bytes: S.baseBytes, name: S.fileName, ver: S.baseVer };
+  s.busy = true;
   input.value = '';
-  if (!history.length) list.replaceChildren();
-  bubble('user', q);
-  const out = bubble('assistant');
+  if (!s.history.length) s.list.replaceChildren();
+  bubble(s, 'user', q);
+  const out = bubble(s, 'assistant');
   out.body.innerHTML = '<span class="ai-typing">문서 읽는 중…</span>';
   try {
-    const c = await buildContext();
-    const msgs = history.length
-      ? [...history, { role: 'user', content: q }]
+    const c = await buildContext(s, snap);
+    const msgs = s.history.length
+      ? [...s.history, { role: 'user', content: q }]
       : [{ role: 'user', content: [c.block, { type: 'text', text: q }] }];
     out.body.innerHTML = '<span class="ai-typing">Claude가 문서를 읽고 있어요…</span>';
     const text = await callClaude(msgs, {
       maxTokens,
       onThinking: (n) => { out.body.innerHTML = `<span class="ai-typing">생각하는 중… (${Math.round(n / 100) / 10}k자)</span>`; },
-      onText: (t) => { out.body.innerHTML = md(t); list.scrollTop = list.scrollHeight; },
+      onText: (t) => { out.body.innerHTML = md(t); s.list.scrollTop = s.list.scrollHeight; },
     });
-    history = [...msgs, { role: 'assistant', content: text }];
+    s.history = [...msgs, { role: 'assistant', content: text }];
     finishBubble(out, text);
   } catch (e) {
     out.body.innerHTML = `<span class="ai-err">${esc(e.message === 'NO_KEY' ? 'API 키를 먼저 넣어주세요' : e.message)}</span>`;
-  } finally { busy = false; }
+  } finally { s.busy = false; }
 }
 
 // ---------------- find & highlight ----------------
@@ -280,14 +296,17 @@ async function highlightFlow() {
   if (!getKey()) return keyDialog();
   const { promptDialog } = await import('./util.js');
   const what = await promptDialog('무엇을 찾아 하이라이트할까요?', '', { placeholder: '예: 상환재원, 기한이익상실 사유, 담보 관련 조항' });
-  if (!what || busy) return;
-  busy = true;
-  if (!history.length) list.replaceChildren();
-  bubble('user', `하이라이트: ${what}`);
-  const out = bubble('assistant');
+  const s = sess;
+  if (!what) return;
+  if (s.busy) return toast('이 문서의 답변이 끝난 뒤에 할 수 있어요');
+  const snap = { doc: S.pdfDoc, bytes: S.baseBytes, name: S.fileName, ver: S.baseVer };
+  s.busy = true;
+  if (!s.history.length) s.list.replaceChildren();
+  bubble(s, 'user', `하이라이트: ${what}`);
+  const out = bubble(s, 'assistant');
   out.body.innerHTML = '<span class="ai-typing">관련 부분 찾는 중…</span>';
   try {
-    const c = await buildContext();
+    const c = await buildContext(s, snap);
     if (c.mode !== 'text') throw new Error('스캔(이미지) PDF라 글자 위치를 찾을 수 없어요. 요약·질문은 가능해요.');
     const instr = `다음과 관련된 문서 부분을 찾아라: "${what}"
 JSON만 출력한다. 다른 말은 쓰지 않는다.
@@ -301,11 +320,14 @@ JSON만 출력한다. 다른 말은 쓰지 않는다.
     const items = json.items || [];
     const found = [], missed = [];
     for (const it of items) {
-      const rects = await locateQuote(it.page - 1, it.quote || '');
+      const rects = await locateQuote(it.page - 1, it.quote || '', snap.doc);
       if (rects?.length) found.push({ page: it.page - 1, type: 'highlight', rects, quote: it.quote, text: it.note || '', color: [1, 0.8, 0.5], opacity: 1, author: 'Claude' });
       else missed.push(it);
     }
-    if (found.length) addAnnotations(found);
+    if (found.length) {
+      if (S.pdfDoc === snap.doc) addAnnotations(found);
+      else s.pendingAnn.push(...found); // that tab isn't on screen: add when it comes back
+    }
     let msg = `**${found.length}곳 하이라이트했어요.** 각 하이라이트에 이유를 메모로 달았어요.\n`;
     for (const f of found) msg += `\n- ${f.page + 1}쪽: ${f.text}`;
     if (missed.length) { msg += `\n\n위치를 못 찾은 ${missed.length}곳:`; for (const m of missed) msg += `\n- ${m.page}쪽: "${(m.quote || '').slice(0, 60)}" — ${m.note || ''}`; }
@@ -313,7 +335,7 @@ JSON만 출력한다. 다른 말은 쓰지 않는다.
     finishBubble(out, msg);
   } catch (e) {
     out.body.innerHTML = `<span class="ai-err">${esc(e.message === 'NO_KEY' ? 'API 키를 먼저 넣어주세요' : e.message)}</span>`;
-  } finally { busy = false; }
+  } finally { s.busy = false; }
 }
 
 const mctx = document.createElement('canvas').getContext('2d');
@@ -321,9 +343,9 @@ mctx.font = '10px sans-serif';
 const norm = (ch) => ch.normalize('NFKC').toLowerCase().replace(/[‘’`´]/g, "'").replace(/[“”]/g, '"').replace(/[‐-―−]/g, '-');
 
 /** Find a quote on a page and return highlight rects in PDF coordinates */
-export async function locateQuote(p, quote) {
-  if (!S.pdfDoc || p < 0 || p >= S.pdfDoc.numPages || !quote) return null;
-  const tc = await (await S.pdfDoc.getPage(p + 1)).getTextContent();
+export async function locateQuote(p, quote, doc = S.pdfDoc) {
+  if (!doc || p < 0 || p >= doc.numPages || !quote) return null;
+  const tc = await (await doc.getPage(p + 1)).getTextContent();
   let flat = '';
   const map = [];
   tc.items.forEach((it, ii) => {
