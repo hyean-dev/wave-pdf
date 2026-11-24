@@ -11,7 +11,7 @@ import { initAI, toggleAI, aiBusy } from './ai.js';
 import * as OL from './outline.js';
 import * as NV from './native.js';
 
-const APP_VERSION = '1.19.0';
+const APP_VERSION = '1.19.1';
 const container = $('#viewerContainer');
 
 // ---------------- icons ----------------
