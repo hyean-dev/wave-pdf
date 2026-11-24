@@ -1,5 +1,5 @@
 // Wave PDF service worker: offline app shell + Android share target
-const VERSION = 'wavepdf-v1.19.1';
+const VERSION = 'wavepdf-v1.19.2';
 const CORE = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'js/app.js', 'js/state.js', 'js/util.js', 'js/icons.js', 'js/store.js', 'js/viewer.js', 'js/annots.js',

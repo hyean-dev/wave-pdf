@@ -11,7 +11,7 @@ import { initAI, toggleAI, aiBusy } from './ai.js';
 import * as OL from './outline.js';
 import * as NV from './native.js';
 
-const APP_VERSION = '1.19.1';
+const APP_VERSION = '1.19.2';
 const container = $('#viewerContainer');
 
 // ---------------- icons ----------------
@@ -777,7 +777,7 @@ async function printDoc() {
 }
 function showShortcuts() {
   const groups = [
-    ['파일·탭', [['Ctrl+O', '열기'], ['Ctrl+S', '저장'], ['Ctrl+P', '인쇄'], ['Ctrl+1 ~ Ctrl+9', '1~9번째 탭으로'], ['Ctrl+Tab / Ctrl+PgDn', '다음 탭'], ['Ctrl+Shift+Tab / Ctrl+PgUp', '이전 탭']]],
+    ['파일·탭', [['Ctrl+O', '열기'], ['Ctrl+S', '저장'], ['Ctrl+P', '인쇄'], ['Ctrl+1 ~ Ctrl+9', '1~9번째 탭으로'], ['Ctrl+W / Ctrl+F4', '지금 탭 닫기'], ['Ctrl+Tab / Ctrl+PgDn', '다음 탭'], ['Ctrl+Shift+Tab / Ctrl+PgUp', '이전 탭']]],
     ['보기', [['D', '화면 모드 (기본 → 흑백 반전 → 세피아)'], ['Ctrl+F', '검색'], ['Ctrl+휠', '확대·축소']]],
     ['도구', [['H', '이동(손)'], ['T', '텍스트 선택'], ['Y', '형광펜'], ['U', '밑줄'], ['P', '펜'], ['M', '마커'], ['E', '지우개'], ['X', '글상자'], ['Esc', '이동 도구로 / 선택 해제']]],
     ['편집', [['Ctrl+Z', '되돌리기'], ['Ctrl+Y / Ctrl+Shift+Z', '다시 실행'], ['Delete', '선택한 주석 삭제'], ['Ctrl+B', '글상자 굵게 (입력 중)']]],
@@ -1161,6 +1161,7 @@ document.addEventListener('keydown', (e) => {
   const key = /^Key[A-Z]$/.test(e.code) ? e.code.slice(3).toLowerCase() : e.key.toLowerCase();
   const mod = e.ctrlKey || e.metaKey;
   if (mod && key === 's') { e.preventDefault(); save(); return; }
+  if ((mod && key === 'w') || (mod && e.key === 'F4')) { e.preventDefault(); if (activeTab) closeTab(activeTab); return; }
   if (mod && key === 'p' && !NV.NATIVE) { e.preventDefault(); if (S.pdfDoc) printDoc(); return; }
   if (mod && key === 'o') { e.preventDefault(); openLocal(); return; }
   if (mod && key === 'f') { e.preventDefault(); openSearch(); return; }
