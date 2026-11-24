@@ -7,11 +7,11 @@ import { prepare, buildPdf, qpdf } from './pdfio.js';
 import * as DR from './drive.js';
 import { openPageEditor } from './pages.js';
 import { pickSignature } from './sign.js';
-import { initAI, toggleAI, aiBusy } from './ai.js';
+import { initAI, toggleAI, aiBusy, claudeOutline } from './ai.js';
 import * as OL from './outline.js';
 import * as NV from './native.js';
 
-const APP_VERSION = '1.20.2';
+const APP_VERSION = '1.21.0';
 const container = $('#viewerContainer');
 
 // ---------------- icons ----------------
@@ -978,6 +978,43 @@ async function addBookmark() {
   OL.markOutlineChanged();
   toast('책갈피를 추가했어요');
 }
+let bmClaude = '', bmClaudeDoc = null;
+async function autoBookmarksMenu(e) {
+  document.querySelector('.bm-menu')?.remove();
+  const anchor = e.currentTarget;
+  const go = (fn) => () => { menu.remove(); fn(); };
+  const menu = el('div', { class: 'ctx-menu bm-menu' }, el('div', { class: 'bm-menu-list' },
+    el('button', { class: 'menu-item', onclick: go(autoBookmarks) }, '빠르게 자동 생성 (규칙)'),
+    el('button', { class: 'menu-item', onclick: go(claudeBookmarks) }, 'Claude로 만들기 (정확, API 사용)')));
+  document.body.append(menu);
+  const r = anchor.getBoundingClientRect();
+  menu.style.left = Math.min(r.left, innerWidth - 240) + 'px';
+  menu.style.top = r.bottom + 4 + 'px';
+  setTimeout(() => document.addEventListener('pointerdown', function off(ev) { if (!menu.contains(ev.target)) { menu.remove(); document.removeEventListener('pointerdown', off, true); } }, true), 0);
+}
+/** Claude reads the document and writes the bookmarks; runs in the background (tabs can change meanwhile) */
+async function claudeBookmarks() {
+  if (!S.pdfDoc || bmClaude) return;
+  if (S.outline?.length && !(await confirmDialog('지금 책갈피를 지우고 Claude가 새로 만들게 할까요? 문서 내용이 Anthropic API로 전송돼요.', '만들기'))) return;
+  const snap = { doc: S.pdfDoc, bytes: S.baseBytes, name: S.fileName, ver: S.baseVer };
+  const tab = activeTab;
+  bmClaudeDoc = snap.doc;
+  const status = (t) => { bmClaude = t; if (S.pdfDoc === snap.doc) renderPanel(); };
+  status('Claude 준비 중…');
+  try {
+    const list = await claudeOutline(snap, status);
+    if (!list.length) throw new Error('책갈피를 만들지 못했어요');
+    const st = tab === activeTab ? S : tab?.st;
+    if (!st || st.pdfDoc !== snap.doc) return; // tab closed or document replaced
+    st.prevOutline = st.outline;
+    st.outline = OL.normalizeLevels(list);
+    st.outlineDirty = true; st.dirty = true; st.rev = (st.rev || 0) + 1;
+    if (st === S) OL.markOutlineChanged(); else renderTabs();
+    toast(`Claude가 책갈피 ${list.length}개를 만들었어요${st === S ? '' : ` ("${st.fileName}")`}`);
+  } catch (e) {
+    if (e.message !== 'CANCELLED') toast('Claude 책갈피 실패: ' + (e.message === 'NO_KEY' ? 'API 키를 먼저 넣어주세요' : e.message));
+  } finally { bmClaude = ''; renderPanel(); }
+}
 async function autoBookmarks() {
   if (!S.pdfDoc) return;
   if (S.outline?.length && !(await confirmDialog('지금 책갈피를 지우고 자동으로 새로 만들까요?', '새로 만들기'))) return;
@@ -1019,7 +1056,7 @@ function renderBookmarks(body) {
   const head = el('div', { class: 'bm-head' },
     el('span', { class: 'bm-count' }, list?.length ? `책갈피 ${list.length}` : '책갈피'),
     S.prevOutline !== undefined ? tb('undo', '자동 생성 전으로 되돌리기', () => { S.outline = S.prevOutline || []; S.prevOutline = undefined; OL.markOutlineChanged(); }) : null,
-    tb('sparkles', '제목을 찾아 자동 생성', autoBookmarks),
+    bmClaude && bmClaudeDoc === S.pdfDoc ? el('span', { class: 'bm-status' }, bmClaude) : tb('sparkles', '자동 생성', autoBookmarksMenu),
     tb('plus', '지금 보는 위치에 추가', addBookmark));
   const parts = [head];
   if (list == null) parts.push(el('div', { class: 'bm-empty' }, bmLoading ? '책갈피를 불러오는 중…' : ''));

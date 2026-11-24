@@ -390,3 +390,41 @@ export async function locateQuote(p, quote, doc = S.pdfDoc) {
   }
   return merged;
 }
+
+// ---------------- bookmarks made by Claude ----------------
+/** Ask Claude for the document's outline. Returns [{title, page, top, level}] (pages 0-based). */
+export async function claudeOutline(snap, onProgress = () => {}) {
+  if (!getKey()) { await keyDialog(); if (!getKey()) throw new Error('CANCELLED'); }
+  let s = sessions.get(snap.doc);
+  if (!s) { s = { ...blank(), doc: snap.doc }; sessions.set(snap.doc, s); }
+  onProgress('문서 읽는 중…');
+  const c = await buildContext(s, snap);
+  const instr = `이 문서의 책갈피(PDF 목차)를 만들어라. JSON만 출력하고 다른 말은 쓰지 않는다.
+{"items":[{"title":"책갈피 이름","page":쪽번호(정수, 문서의 ===== N쪽 ===== 기준),"level":0~3,"line":"그 제목이 해당 쪽에 나오는 원문 그대로(40자 이내)"}]}
+규칙:
+- 문서 순서대로. 목차·차례 쪽에 적힌 줄은 넣지 않고 본문에 실제로 나오는 위치를 쓴다.
+- 법령·규약·약정서: 편·장·절 → 조 순서로 단계를 매긴다. 조는 "제2조(정의)"처럼 조 번호와 제목만. 부칙과 별표·별첨·별지·서식은 맨 위 단계(0)로 따로 둔다. 부칙 안의 조는 그 부칙 아래.
+- 보고서·IM·투자설명서: 장·절 제목. 표 안의 글, 그림 설명, 본문 항목(1., 가., ①)은 넣지 않는다.
+- 제목이 없는 조는 "제5조"처럼 번호만.
+- 최대 400개.`;
+  let n = 0;
+  const raw = await callClaude([{ role: 'user', content: [c.block, { type: 'text', text: instr }] }], {
+    maxTokens: 32000,
+    onThinking: (k) => onProgress(`Claude가 구조를 보는 중… (${Math.round(k / 100) / 10}k자)`),
+    onText: (t) => { const m = (t.match(/"title"/g) || []).length; if (m !== n) { n = m; onProgress(`Claude가 책갈피를 쓰는 중… ${n}개`); } },
+  });
+  const json = JSON.parse(raw.replace(/^[\s\S]*?(\{[\s\S]*\})[\s\S]*$/, '$1'));
+  const out = [];
+  onProgress('위치 맞추는 중…');
+  for (const it of json.items || []) {
+    const page = Math.max(0, Math.min(snap.doc.numPages - 1, (it.page | 0) - 1));
+    if (!it.title) continue;
+    let top = null;
+    if (c.mode === 'text' && it.line) {
+      const rects = await locateQuote(page, it.line, snap.doc);
+      if (rects?.length) top = Math.round(Math.max(...rects.map((r) => r[3])) + 2);
+    }
+    out.push({ title: String(it.title).slice(0, 120), page, top, level: Math.max(0, Math.min(3, it.level | 0)) });
+  }
+  return out;
+}
