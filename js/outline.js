@@ -96,6 +96,13 @@ export async function autoOutline(doc, onProgress = () => {}) {
   for (const l of lines) { const k = l.text.replace(/\d+/g, '#'); freq.set(k, (freq.get(k) || new Set()).add(l.page)); }
   const repeatLimit = Math.max(3, n * 0.3);
 
+  // laws, rules, agreements: 편·장·절·조 structure decides the outline, not font size
+  // (running headers repeat word for word, so only exact repeats are dropped here)
+  const exact = new Map();
+  for (const l of lines) exact.set(l.text, (exact.get(l.text) || new Set()).add(l.page));
+  const legal = legalOutline(lines.filter((l) => (exact.get(l.text)?.size || 0) < repeatLimit));
+  if (legal) return legal;
+
   // exact duplicates across pages (table headers etc.)
   const dup = new Map();
   for (const l of lines) dup.set(l.text, (dup.get(l.text) || new Set()).add(l.page));
@@ -109,6 +116,16 @@ export async function autoOutline(doc, onProgress = () => {}) {
     if (l.size >= body * 1.18) return !tabular || l.size >= body * 1.5;
     return !tabular && l.size >= body * 0.98 && len <= 45 && NUMBERED.test(l.text);
   });
+  // body-size numbered lines that are everywhere are list items (1. 가. (1)…), not headings
+  const plainNum = cands.filter((c) => c.size < body * 1.18);
+  if (plainNum.length > Math.max(12, n * 2.5)) {
+    const big = cands.filter((c) => c.size >= body * 1.18);
+    // keep only numbering styles that stay rare (e.g. "1." chapters), drop the frequent ones
+    const style = (t) => (/^\d+\.\d/.test(t) ? 'dd' : /^\d/.test(t) ? 'd' : /^[가-하]/.test(t) ? 'k' : /^\(/.test(t) ? 'p' : /^[①-⑳]/.test(t) ? 'c' : 'o');
+    const per = new Map();
+    for (const c of plainNum) per.set(style(c.text), (per.get(style(c.text)) || 0) + 1);
+    cands = [...big, ...plainNum.filter((c) => per.get(style(c.text)) <= Math.max(8, n * 0.8))].sort((a, b) => a.page - b.page || b.y - a.y);
+  }
   // sizes used on a single page only (cover page) are not section headings
   if (n >= 5) {
     const pagesBySize = new Map();
@@ -142,6 +159,60 @@ export async function autoOutline(doc, onProgress = () => {}) {
     if (m && clusters.length < 2) level = Math.min(2, m[1].split('.').length - 1);
     return { title: c.text.slice(0, 120), page: c.page, top: Math.round(c.y + c.size * 1.1), level };
   }));
+}
+
+// ---------- legal documents (법령·규약·약정서) ----------
+const sp = (t) => t.replace(/\s+/g, ' ').trim();
+const ART = /^제\s*(\d+)\s*조(?:\s*의\s*(\d+))?(?=\s|[\(（【\[「<]|$)/;
+const ART_TITLE = /^\s*([\(（【\[「<])\s*([^\)）】\]」>]{1,40}?)\s*[\)）】\]」>]/;
+const PART = /^제\s*(\d+)\s*(편|장|절|관)(?=\s|$|[\(（【\[·])/;
+const ANNEX = /^[\[［<〈【(]?\s*(별\s*표|별\s*첨|별\s*지|부\s*표|서\s*식|첨\s*부)\s*(제?\s*\d+\s*호?)?/;
+const SUPP = /^부\s*칙(\s|$|[<〈(（])/;
+const TOC_LINE = /(\.{3,}|…{2,}|·{3,}|\s{2,})\s*\d{1,3}\s*$/;
+
+// "제3조 및 제5조에 따른 …", "제2조에 따라 …": a sentence that happens to start a line, not an article heading
+const REF = /^\s*(및|또는|부터|내지|ㆍ|·|,|，|에|의|를|은|는|이|가|와|과|제\s*\d+\s*(항|호|조))/;
+const isArt = (t) => { const m = t.match(ART); if (!m) return false; const rest = t.slice(m[0].length); return !REF.test(rest) && !/^\S{0,12}(따른|따라|의하여|의한)/.test(rest.trim()); };
+
+function legalOutline(lines) {
+  const arts = lines.filter((l) => isArt(sp(l.text)) && !TOC_LINE.test(l.text));
+  if (arts.length < 3) return null;
+  // most articles carry a title in brackets → then a line without one is just a sentence starting with "제3조 …"
+  const titled = arts.filter((l) => ART_TITLE.test(l.text.replace(ART, ''))).length;
+  const needTitle = titled >= arts.length * 0.6;
+  const items = [];
+  for (const l of lines) {
+    const t = sp(l.text);
+    if (TOC_LINE.test(t)) continue;
+    let m;
+    if ((m = t.match(ART)) && isArt(t)) {
+      const rest = t.slice(m[0].length);
+      const tm = rest.match(ART_TITLE);
+      if (needTitle && !tm) continue;
+      const num = `제${m[1]}조${m[2] ? '의' + m[2] : ''}`;
+      const title = tm ? `${num}(${sp(tm[2])})` : `${num} ${sp(rest).slice(0, 24)}`.trim();
+      items.push({ kind: '조', title, l });
+    } else if ((m = t.match(PART))) {
+      if (t.length > 50) continue;
+      items.push({ kind: m[2], title: sp(`제${m[1]}${m[2]} ${t.slice(m[0].length)}`).slice(0, 60), l });
+    } else if (SUPP.test(t) && t.length <= 40) {
+      items.push({ kind: '부칙', title: sp(t).replace(/^부\s*칙/, '부칙'), l });
+    } else if (ANNEX.test(t) && t.length <= 60 && !/에\s*(따른|의한|따라)/.test(t)) {
+      items.push({ kind: '별표', title: sp(t).slice(0, 60), l });
+    }
+  }
+  // depth by which kinds are present: 편 > 장 > 절·관 > 조; 부칙·별표 sit at the top
+  const order = ['편', '장', '절', '관', '조'].filter((k) => items.some((i) => i.kind === k));
+  const rank = (k) => (k === '부칙' || k === '별표' ? 0 : Math.min(3, order.indexOf(k)));
+  // articles inside 부칙 hang under it
+  let inSupp = false;
+  const out = items.map((i) => {
+    if (i.kind === '부칙' || i.kind === '별표') inSupp = i.kind === '부칙';
+    else if (i.kind !== '조') inSupp = false;
+    const level = i.kind === '조' && inSupp ? 1 : rank(i.kind);
+    return { title: i.title, page: i.l.page, top: Math.round(i.l.y + i.l.size * 1.1), level };
+  });
+  return normalizeLevels(out);
 }
 
 /** One bookmark per page (fallback) */
