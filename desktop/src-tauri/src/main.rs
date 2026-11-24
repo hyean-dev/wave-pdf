@@ -39,7 +39,9 @@ fn main() {
         // a second launch (another PDF double-clicked) hands its files to the running window → new tab
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             let files = pdf_args(&args);
-            if let Some(w) = app.get_webview_window("main") {
+            // the main window, or any other window still open
+            let w = app.get_webview_window("main").or_else(|| app.webview_windows().into_values().next());
+            if let Some(w) = w {
                 let _ = w.unminimize();
                 let _ = w.set_focus();
                 if !files.is_empty() {

@@ -1,5 +1,11 @@
 {
   "identifier": "default",
-  "windows": ["main"],
-  "permissions": ["core:default"]
+  "windows": [
+    "*"
+  ],
+  "permissions": [
+    "core:default",
+    "core:webview:allow-create-webview-window",
+    "core:window:allow-set-focus"
+  ]
 }

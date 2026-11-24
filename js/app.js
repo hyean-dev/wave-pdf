@@ -11,7 +11,7 @@ import { initAI, toggleAI, aiBusy } from './ai.js';
 import * as OL from './outline.js';
 import * as NV from './native.js';
 
-const APP_VERSION = '1.19.2';
+const APP_VERSION = '1.20.0';
 const container = $('#viewerContainer');
 
 // ---------------- icons ----------------
@@ -298,19 +298,79 @@ function renderTabs() {
   const items = tabs.map((t) => {
     const st = stOf(t);
     const x = el('button', { class: 'tab-x', title: '탭 닫기', html: icon('x'), onclick: (e) => { e.stopPropagation(); closeTab(t); } });
-    const b = el('div', { class: `tab ${t === activeTab ? 'on' : ''}`, title: st.fileName, role: 'tab' },
+    const b = el('div', { class: `tab ${t === activeTab ? 'on' : ''}`, title: st.fileName, role: 'tab', 'data-id': t.id },
       st.dirty ? el('span', { class: 'tab-dot' }) : null, el('span', { class: 'tab-name' }, st.fileName || '문서'), x);
-    b.addEventListener('click', () => switchTab(t));
+    b.addEventListener('click', () => { if (dragJustEnded) return; switchTab(t); });
     b.addEventListener('auxclick', (e) => { if (e.button === 1) { e.preventDefault(); closeTab(t); } });
     b.addEventListener('contextmenu', (e) => { e.preventDefault(); tabMenu(t, b); });
     let lp = null;
-    b.addEventListener('pointerdown', (e) => { if (e.pointerType !== 'mouse') lp = setTimeout(() => { lp = 'done'; tabMenu(t, b); }, 550); });
+    b.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse') { if (e.button === 0 && !e.target.closest('.tab-x')) tabDrag(t, b, e); return; }
+      lp = setTimeout(() => { lp = 'done'; tabMenu(t, b); }, 550);
+    });
     for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) b.addEventListener(ev, () => { if (lp !== 'done') clearTimeout(lp); lp = null; });
     return b;
   });
   const add = el('button', { class: 'tab-add', title: '다른 PDF 열기', html: icon('plus'), onclick: openAnother });
   bar.replaceChildren(...items, add);
   bar.querySelector('.tab.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+// drag a tab: along the bar = reorder, out of the window (or well below the bar) = open it in a new window
+let dragJustEnded = false;
+const CAN_TEAR = !NV.NATIVE;
+function tabDrag(t, b, e0) {
+  const bar = $('#tabBar');
+  let moved = false, ghost = null, out = false;
+  const isOut = (e) => {
+    if (!CAN_TEAR || tabs.length < 1) return false;
+    const r = bar.getBoundingClientRect();
+    return e.clientX < 0 || e.clientY < 0 || e.clientX > innerWidth || e.clientY > innerHeight || e.clientY > r.bottom + 70;
+  };
+  const move = (e) => {
+    if (!moved && Math.hypot(e.clientX - e0.clientX, e.clientY - e0.clientY) < 6) return;
+    if (!moved) {
+      moved = true;
+      // (listening on window: the first move may already be outside the bar)
+  // capture only once it is a drag (a plain click must still reach the tab); on the bar, because the tab
+      // element itself moves in the DOM while reordering, which would drop the capture
+      try { bar.setPointerCapture(e0.pointerId); } catch {}
+      b.classList.add('dragging');
+      ghost = el('div', { class: 'tab-ghost' }, stOf(t).fileName || '문서');
+      document.body.append(ghost);
+    }
+    out = isOut(e);
+    ghost.style.transform = `translate(${e.clientX + 12}px, ${e.clientY + 10}px)`;
+    ghost.classList.toggle('out', out);
+    ghost.dataset.hint = out ? '놓으면 새 창으로' : '';
+    // live reorder while over the bar
+    if (!out && tabs.length > 1) {
+      const others = [...bar.querySelectorAll('.tab')];
+      const rest0 = others.filter((o) => o !== b);
+      let to = rest0.findIndex((o) => { const r = o.getBoundingClientRect(); return e.clientX < r.left + r.width / 2; });
+      if (to < 0) to = rest0.length;
+      const from = tabs.indexOf(t);
+      if (to !== from) {
+        // move the element itself (re-rendering would drop the pointer capture)
+        tabs.splice(from, 1); tabs.splice(to, 0, t);
+        const rest = others.filter((o) => o !== b);
+        bar.insertBefore(b, rest[to] || bar.querySelector('.tab-add'));
+      }
+    }
+  };
+  const end = (e) => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', end);
+    window.removeEventListener('pointercancel', end);
+    bar.releasePointerCapture?.(e0.pointerId);
+    ghost?.remove();
+    bar.querySelectorAll('.tab.dragging').forEach((x) => x.classList.remove('dragging'));
+    if (!moved) return;
+    dragJustEnded = true; setTimeout(() => { dragJustEnded = false; }, 0);
+    if (e.type === 'pointerup' && isOut(e)) moveTabToWindow(t, { x: e.screenX - 80, y: e.screenY - 20 });
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', end);
+  window.addEventListener('pointercancel', end);
 }
 async function openAnother() {
   if (NV.NO_DRIVE) return openLocal();
@@ -322,7 +382,7 @@ function tabMenu(t, anchor) {
   document.querySelector('.bm-menu')?.remove();
   const go = (fn) => () => { menu.remove(); fn(); };
   const menu = el('div', { class: 'ctx-menu bm-menu' }, el('div', { class: 'bm-menu-list' },
-    NV.NO_DRIVE ? null : el('button', { class: 'menu-item', onclick: go(() => moveTabToWindow(t)) }, '새 창으로 옮기기'),
+    NV.NATIVE ? null : el('button', { class: 'menu-item', onclick: go(() => moveTabToWindow(t)) }, '새 창으로 옮기기'),
     el('button', { class: 'menu-item', onclick: go(() => closeTab(t)) }, '이 탭 닫기'),
     el('button', { class: 'menu-item', disabled: tabs.length < 2, onclick: go(async () => { for (const o of [...tabs]) if (o !== t && !(await closeTab(o))) break; }) }, '다른 탭 모두 닫기')));
   document.body.append(menu);
@@ -334,11 +394,18 @@ function tabMenu(t, anchor) {
 
 // ---------------- new window ----------------
 /** hand a file (or a whole tab's state) to a new app window through IndexedDB */
-async function openInWindow(payload) {
+async function openInWindow(payload, pos) {
   const id = Math.random().toString(36).slice(2, 10);
   await idbSet('xfer:' + id, payload);
   const url = `${location.pathname}?xfer=${id}`;
-  let w = window.open(url, '_blank');
+  const W = Math.min(1280, screen.availWidth), H = Math.min(900, screen.availHeight);
+  const x = Math.max(0, Math.min((pos?.x ?? window.screenX + 40), screen.availWidth - W));
+  const y = Math.max(0, Math.min((pos?.y ?? window.screenY + 40), screen.availHeight - H));
+  if (NV.DESKTOP) {
+    try { await NV.newWindow(url, { x, y, width: W, height: H }); return true; }
+    catch (e) { idbDel('xfer:' + id); toast('새 창을 열지 못했어요: ' + e); return false; }
+  }
+  let w = window.open(url, '_blank', pos ? `popup,left=${x},top=${y},width=${W},height=${H}` : '');
   if (!w) {
     // popup blocked (no recent click) → ask for a click
     const go = await modal({ title: '새 창 열기', body: el('div', { class: 'muted' }, `"${payload.name || payload.st?.fileName || 'PDF'}"을(를) 새 창에서 열어요.`), buttons: [{ label: '취소', value: false }, { label: '새 창 열기', value: true, primary: true }] });
@@ -347,11 +414,11 @@ async function openInWindow(payload) {
   }
   return true;
 }
-async function moveTabToWindow(t) {
+async function moveTabToWindow(t, pos) {
   if (t === activeTab) stashActive();
   const st = t.st;
   if (st.dirty && st.pdfDoc?.annotationStorage?.serializable?.map?.size) toast('양식에 입력한 값은 새 창으로 옮겨지지 않아요. 먼저 저장하세요');
-  const ok = await openInWindow({ kind: 'state', st: { ...pickDoc(st), pdfDoc: null, outlineDoc: null }, page: t.view?.page || 1 });
+  const ok = await openInWindow({ kind: 'state', st: { ...pickDoc(st), pdfDoc: null, outlineDoc: null }, page: t.view?.page || 1 }, pos);
   if (ok) await closeTab(t, { force: true });
 }
 /** open a document state (from another window) as a tab */

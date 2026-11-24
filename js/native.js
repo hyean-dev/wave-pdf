@@ -43,3 +43,10 @@ export async function onDesktopFiles(fn) {
   go(await T.core.invoke('take_opened'));
 }
 export const writePath = (path, bytes) => T.core.invoke('write_file', bytes, { headers: { 'x-path': hex(path) } });
+
+/** desktop: open the app in another window (tab dragged out) */
+export async function newWindow(url, { x, y, width, height }) {
+  const W = T.webviewWindow.WebviewWindow;
+  const w = new W('w' + Date.now().toString(36), { url, title: 'Wave PDF', x, y, width, height, minWidth: 480, minHeight: 400, dragDropEnabled: false });
+  await new Promise((res, rej) => { w.once('tauri://created', res); w.once('tauri://error', (e) => rej(e.payload)); });
+}
