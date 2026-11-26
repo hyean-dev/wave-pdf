@@ -11,7 +11,11 @@ import { initAI, toggleAI, aiBusy, claudeOutline } from './ai.js';
 import * as OL from './outline.js';
 import * as NV from './native.js';
 
-const APP_VERSION = '1.21.1';
+// Windows app: may be about to switch to the online version; don't start (or take launch files) before that
+if (window.__waveGate) await window.__waveGate;
+
+
+const APP_VERSION = '1.22.0';
 const container = $('#viewerContainer');
 
 // ---------------- icons ----------------
@@ -1298,7 +1302,13 @@ window.addEventListener('drop', async (e) => {
 // ---------------- startup ----------------
 selectTool('hand');
 DR.preload();
-if (!NV.NO_DRIVE && 'serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => {});
+// offline cache: browsers, and the Windows app when it runs the online version (the APK keeps its bundled copy for that)
+if (!NV.NATIVE && 'serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => {});
+if (NV.NO_DRIVE) {
+  const last = localStorage.getItem('lastVersion');
+  if (last && last !== APP_VERSION) setTimeout(() => toast(`새 버전으로 업데이트됐어요 (v${APP_VERSION})`), 1500);
+  localStorage.setItem('lastVersion', APP_VERSION);
+}
 
 let incoming = false;
 if ('launchQueue' in window) {

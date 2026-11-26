@@ -1,0 +1,19 @@
+{
+  "identifier": "live-app",
+  "windows": [
+    "*"
+  ],
+  "remote": {
+    "urls": [
+      "https://hyean-dev.github.io/*"
+    ]
+  },
+  "permissions": [
+    "core:default",
+    "core:webview:allow-create-webview-window",
+    "core:window:allow-set-focus",
+    "allow-take-opened",
+    "allow-read-file",
+    "allow-write-file"
+  ]
+}

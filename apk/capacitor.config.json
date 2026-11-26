@@ -2,5 +2,14 @@
   "appId": "io.github.hyeandev.wavepdf",
   "appName": "Wave PDF",
   "webDir": "www",
-  "android": { "allowMixedContent": false }
+  "android": {
+    "allowMixedContent": false
+  },
+  "server": {
+    "url": "https://hyean-dev.github.io/wave-pdf/",
+    "errorPath": "index.html",
+    "allowNavigation": [
+      "hyean-dev.github.io"
+    ]
+  }
 }

@@ -47,6 +47,8 @@ export const writePath = (path, bytes) => T.core.invoke('write_file', bytes, { h
 /** desktop: open the app in another window (tab dragged out) */
 export async function newWindow(url, { x, y, width, height }) {
   const W = T.webviewWindow.WebviewWindow;
+  // absolute, so a window opened from the online version stays on the online version (same storage)
+  url = new URL(url, location.href).href;
   const w = new W('w' + Date.now().toString(36), { url, title: 'Wave PDF', x, y, width, height, minWidth: 480, minHeight: 400, dragDropEnabled: false });
   await new Promise((res, rej) => { w.once('tauri://created', res); w.once('tauri://error', (e) => rej(e.payload)); });
 }

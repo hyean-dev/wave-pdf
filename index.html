@@ -1,6 +1,18 @@
 <!doctype html>
 <html lang="ko">
 <head>
+<script>
+// Windows app: open the always-current online version; stay on the bundled copy when offline
+(function () {
+  var REMOTE = 'https://hyean-dev.github.io/wave-pdf/';
+  if (!window.__TAURI__ || location.hostname !== 'tauri.localhost' || sessionStorage.getItem('waveLocal')) return;
+  var ac = new AbortController(); setTimeout(function () { ac.abort(); }, 4000);
+  window.__waveGate = fetch(REMOTE + 'sw.js', { cache: 'no-store', signal: ac.signal })
+    .then(function (r) { if (!r.ok) throw 0; location.replace(REMOTE); return new Promise(function () {}); })
+    .catch(function () { sessionStorage.setItem('waveLocal', '1'); });
+})();
+</script>
+
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <meta name="theme-color" content="#0f3b5f">
