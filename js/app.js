@@ -15,7 +15,7 @@ import * as NV from './native.js';
 if (window.__waveGate) await window.__waveGate;
 
 
-const APP_VERSION = '1.22.0';
+const APP_VERSION = '1.22.1';
 const container = $('#viewerContainer');
 
 // ---------------- icons ----------------
@@ -957,8 +957,9 @@ async function loadBookmarks(doc) {
 }
 on('outline', () => { persistState(); if (panelOpen && panelTab === 'outline') renderPanel(); });
 
-function goBookmark(it) {
+function goBookmark(it, i) {
   if (it.top != null) VW.scrollToPoint(it.page, null, it.top); else VW.goToPage(it.page + 1);
+  if (i != null) requestAnimationFrame(() => { bmClicked = { i, scroll: container.scrollTop }; markCurrentBookmark(); });
   if (narrow()) togglePanel(false);
 }
 function visibleTop(pageIdx) {
@@ -1068,18 +1069,38 @@ function renderBookmarks(body) {
   else if (!list.length) parts.push(el('div', { class: 'bm-empty' }, '책갈피가 없어요. ✨ 버튼을 누르면 제목을 찾아 만들어 줘요.'));
   else {
     if (S.outlineAuto && !S.outlineDirty) parts.push(el('div', { class: 'bm-note' }, '자동으로 만든 책갈피예요 · 저장하면 PDF에 들어가요'));
-    // current section = last bookmark at or before the page being read
-    const cur = VW.viewer.currentPageNumber - 1;
-    let curIdx = -1;
-    list.forEach((it, i) => { if (it.page <= cur) curIdx = i; });
-    const rows = list.map((it, i) => el('div', { class: `bm-row lv${Math.min(it.level, 2)} ${i === curIdx ? 'cur' : ''}`, style: { paddingLeft: 8 + it.level * 14 + 'px' } },
-      el('button', { class: 'bm-title', title: it.title, onclick: () => goBookmark(it) }, it.title),
+    const rows = list.map((it, i) => el('div', { class: `bm-row lv${Math.min(it.level, 2)}`, 'data-i': i, style: { paddingLeft: 8 + it.level * 14 + 'px' } },
+      el('button', { class: 'bm-title', title: it.title, onclick: () => goBookmark(it, i) }, it.title),
       el('span', { class: 'bm-page' }, String(it.page + 1)),
       el('button', { class: 'bm-more', title: '편집', 'aria-label': '편집', html: icon('more'), onclick: (e) => bookmarkMenu(i, e.currentTarget) })));
     parts.push(el('div', { class: 'bm-list' }, rows));
   }
   body.replaceChildren(...parts);
+  markCurrentBookmark();
 }
+// the section being read = the last bookmark whose position is at or above the top of the screen
+// (by its exact spot on the page, not just the page: several articles often share one page)
+let bmClicked = null; // { i, scroll } — the one just clicked wins until the view moves
+function bookmarkY(it) {
+  const pv = VW.viewer.getPageView(it.page);
+  if (!pv) return Infinity;
+  const y = it.top != null && pv.viewport ? pv.viewport.convertToViewportPoint(0, it.top)[1] : 0;
+  return pv.div.offsetTop + Math.max(0, y);
+}
+function markCurrentBookmark() {
+  const list = S.outline, box = document.querySelector('#panelBody .bm-list');
+  if (!list?.length || !box) return;
+  let cur = -1;
+  if (bmClicked && Math.abs(container.scrollTop - bmClicked.scroll) < 4) cur = bmClicked.i;
+  else {
+    bmClicked = null;
+    const line = container.scrollTop + 30;
+    list.forEach((it, i) => { if (bookmarkY(it) <= line) cur = i; });
+  }
+  box.querySelectorAll('.bm-row.cur').forEach((r) => r.classList.remove('cur'));
+  box.querySelector(`.bm-row[data-i="${cur}"]`)?.classList.add('cur');
+}
+container.addEventListener('scroll', () => { if (panelOpen && panelTab === 'outline') requestAnimationFrame(markCurrentBookmark); }, { passive: true });
 
 async function copyAllComments() {
   const lines = [`[${S.fileName}] 주석 목록`];
@@ -1228,7 +1249,7 @@ const persistState = debounce(() => {
   }).catch((e) => console.warn('persist', e));
 }, 700);
 on('changed', () => { S.rev++; updateTitle(); persistState(); refreshPanel(); scheduleAutoSave(); });
-on('page', () => { persistState(); if (panelOpen && panelTab === 'outline' && S.outline?.length) renderPanel(); });
+on('page', () => { persistState(); if (panelOpen && panelTab === 'outline' && S.outline?.length) markCurrentBookmark(); });
 
 async function restoreSession() {
   const [sess, base] = await Promise.all([idbGet('session'), idbGet('base')]);
