@@ -555,3 +555,10 @@ body.view-dark kbd { background: #262e36; border-color: #3a444e; }
 .tab-ghost.out::after { content: attr(data-hint); display: block; font-size: 11.5px; font-weight: 500; color: var(--accent-2); margin-top: 2px; }
 .ai-head .ai-model { flex: 1 1 auto; min-width: 0; }
 .bm-status { font-size: 11.5px; color: var(--accent-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 170px; }
+/* font size stepper */
+.size-step { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; height: 30px; background: var(--bg, #fff); }
+.size-btn { width: 28px; height: 100%; border: 0; background: none; display: grid; place-items: center; font-size: 15px; color: var(--text); padding: 0; }
+.size-btn:hover { background: rgba(127,127,127,.12); }
+.size-inp { width: 38px; height: 100%; border: 0; border-left: 1px solid var(--line); border-right: 1px solid var(--line); text-align: center; font: inherit; font-size: 13px; background: none; color: var(--text); -moz-appearance: textfield; }
+.size-inp::-webkit-outer-spin-button, .size-inp::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.ctx-row .size-step { margin: 0 4px; align-self: center; }

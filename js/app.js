@@ -11,7 +11,7 @@ import { initAI, toggleAI, aiBusy, claudeOutline } from './ai.js';
 import * as OL from './outline.js';
 import * as NV from './native.js';
 
-const APP_VERSION = '1.21.0';
+const APP_VERSION = '1.21.1';
 const container = $('#viewerContainer');
 
 // ---------------- icons ----------------
@@ -110,9 +110,10 @@ function renderToolOptions() {
   if (t === 'pen') parts.push(swatchRow('ink', CFG.pen), slider('굵기', CFG.pen, 'width', 0.5, 8, 0.5));
   if (t === 'marker') parts.push(swatchRow('highlight', CFG.marker), slider('굵기', CFG.marker, 'width', 4, 30, 1));
   if (t === 'freetext') {
-    const sizes = el('div', { class: 'seg small' });
     const ft = CFG.freetext;
-    for (const s of [8, 10, 12, 14, 18, 24]) sizes.append(el('button', { class: `seg-btn ${ft.size === s ? 'on' : ''}`, onclick: () => { ft.size = s; saveCfg(); renderToolOptions(); AN.editStyle({ fontSize: s }); } }, String(s)));
+    // the size chosen here is remembered as the default for new text boxes
+    const sizes = el('div', { class: 'opt-slider', title: '새 글상자의 기본 글자 크기 (기억돼요)' }, el('span', {}, '크기'),
+      AN.sizeStepper(() => ft.size || 12, (v) => { ft.size = v; saveCfg(); AN.editStyle({ fontSize: v }); }));
     const bold = el('button', { class: `seg-btn bold-btn ${ft.bold ? 'on' : ''}`, title: '굵게 (Ctrl+B)', html: icon('bold'), onclick: () => { ft.bold = !ft.bold; saveCfg(); renderToolOptions(); AN.editStyle({ bold: ft.bold }); } });
     parts.push(swatchRow('ink', ft, (c) => AN.editStyle({ color: c })), el('div', { class: 'seg small' }, bold), sizes);
   }

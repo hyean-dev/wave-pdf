@@ -259,13 +259,28 @@ export function deselect(render = true) {
 
 let menuEl = null, menuAnchor = null;
 function hideMenu() { menuEl?.remove(); menuEl = null; menuAnchor = null; }
+// font sizes for text boxes: − / + steps through these, the number can also be typed
+export const FT_SIZES = [6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 18, 20, 22, 24, 28, 32, 36, 48];
+export function sizeStepper(get, set) {
+  const step = (d) => {
+    const v = get();
+    const next = d > 0 ? FT_SIZES.find((x) => x > v) ?? v : [...FT_SIZES].reverse().find((x) => x < v) ?? v;
+    if (next !== v) set(next);
+  };
+  const inp = el('input', { class: 'size-inp', type: 'number', min: 4, max: 96, value: get(), title: '글자 크기 (pt)' });
+  inp.addEventListener('change', () => { const v = Math.max(4, Math.min(96, Math.round(+inp.value || get()))); inp.value = v; if (v !== get()) set(v); });
+  inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') inp.blur(); });
+  const btn = (ic, d, t) => el('button', { class: 'size-btn', title: t, html: icon(ic), onclick: (e) => { e.stopPropagation(); step(d); inp.value = get(); } });
+  return el('div', { class: 'size-step', onpointerdown: (e) => e.stopPropagation() }, btn('minus', -1, '작게'), inp, btn('plus', 1, '크게'));
+}
 function showMenu(items, anchorFn, extra) {
   hideMenu();
   menuEl = el('div', { class: 'ctx-menu' });
   if (extra) menuEl.append(extra);
   const row = el('div', { class: 'ctx-row' });
   for (const it of items) {
-    if (it.swatches) {
+    if (it.node) row.append(it.node);
+    else if (it.swatches) {
       const sw = el('div', { class: 'ctx-swatches' });
       for (const c of it.swatches) sw.append(el('button', { class: `swatch ${c === it.current ? 'on' : ''}`, style: { background: c }, onclick: (e) => { e.stopPropagation(); it.pick(c); } }));
       row.append(sw);
@@ -309,8 +324,14 @@ function showAnnMenu() {
   const items = [];
   if (a.type !== 'stamp') items.push({ swatches: sw, current: rgbToHex(a.color).toUpperCase(), pick: (c) => { commit(() => { a.color = hexToRgb(c); a.modified = Date.now(); }, page); showAnnMenu(); } });
   if (a.type === 'freetext') {
+    items.push({ node: sizeStepper(() => a.fontSize || 12, (v) => { commit(() => { a.fontSize = v; a.modified = Date.now(); refitFreetext(page, a); }, page); showAnnMenu(); }) });
     items.push({ icon: 'bold', label: a.bold ? '보통' : '굵게', run: () => { commit(() => { a.bold = !a.bold; a.modified = Date.now(); refitFreetext(page, a); }, page); showAnnMenu(); } });
     items.push({ icon: 'edit', label: '편집', run: () => startEdit(page, a) });
+    items.push({ icon: 'check', label: '기본값으로', run: () => {
+      Object.assign(CFG.freetext, { color: rgbToHex(a.color), size: a.fontSize || 12, bold: !!a.bold });
+      saveCfg(); emit('ftstyle');
+      toast(`새 글상자 기본값: ${a.fontSize || 12}pt${a.bold ? ' 굵게' : ''}, 이 색`);
+    } });
   }
   else items.push({ icon: 'note', label: a.text ? '메모 수정' : '메모', run: () => editComment(page, a) });
   if (a.quote) items.push({ icon: 'copy', label: '복사', run: () => copyText(a.quote) });
@@ -719,7 +740,7 @@ function onUp(e) {
       if (maxW < 30) return;
       const w = Math.min(maxW, fs * 6 * sc);
       const r = rectToPdf(g.vp, [g.pt[0], g.pt[1] - h / 2, g.pt[0] + w, g.pt[1] + h / 2]);
-      const a = newAnn('freetext', { rect: r, fontSize: fs, color: hexToRgb(CFG.freetext.color), rot: g.vp.rotation, opacity: 1 });
+      const a = newAnn('freetext', { rect: r, fontSize: fs, color: hexToRgb(CFG.freetext.color), rot: g.vp.rotation, opacity: 1, ...(CFG.freetext.bold ? { bold: true } : {}) });
       startEdit(g.p, a, true);
       if (editing) { editing.autoW = maxW / sc; placeEditor(); }
       break;
