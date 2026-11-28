@@ -34,6 +34,10 @@ export function initViewer(containerEl) {
     annotationMode: pdfjsLib.AnnotationMode.ENABLE_FORMS,
     removePageBorders: true,
     imageResourcesPath: BASE + 'images/',
+    // pdf.js caps phones/tablets at 5.2M canvas pixels: on a high-density tablet the sharp area then barely
+    // covers the screen and the blurry low-res page shows at its edge while scrolling. Allow more.
+    maxCanvasPixels: /Android|iPad|iPhone/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ? 2 ** 24 : 2 ** 25,
+    capCanvasAreaFactor: 300,
   });
   linkService.setViewer(viewer);
   eventBus.on('pagechanging', ({ pageNumber }) => emit('page', pageNumber));

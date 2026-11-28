@@ -15,7 +15,7 @@ import * as NV from './native.js';
 if (window.__waveGate) await window.__waveGate;
 
 
-const APP_VERSION = '1.23.0';
+const APP_VERSION = '1.23.1';
 const container = $('#viewerContainer');
 
 // ---------------- icons ----------------
