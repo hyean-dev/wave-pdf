@@ -562,3 +562,6 @@ body.view-dark kbd { background: #262e36; border-color: #3a444e; }
 .size-inp { width: 38px; height: 100%; border: 0; border-left: 1px solid var(--line); border-right: 1px solid var(--line); text-align: center; font: inherit; font-size: 13px; background: none; color: var(--text); -moz-appearance: textfield; }
 .size-inp::-webkit-outer-spin-button, .size-inp::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .ctx-row .size-step { margin: 0 4px; align-self: center; }
+
+.eraser-ring { position: fixed; left: 0; top: 0; z-index: 30; pointer-events: none; border: 1.5px solid rgba(229,57,53,.8); border-radius: 50%; background: rgba(229,57,53,.06); }
+.eraser-ring[hidden] { display: none; }

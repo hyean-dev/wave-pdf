@@ -801,18 +801,93 @@ function updateInkTemp() {
   g.temp.setAttribute('d', smoothD(stabilize(g.pts, STAB[CFG.stab ?? 1])));
 }
 
+// Partial erase: pen/marker strokes are cut where the eraser passes (only that part disappears);
+// everything else (highlights, text boxes, …) is removed whole when touched.
 function eraseAt(e) {
+  const ec = CFG.eraser || { mode: 'part', size: 10 };
+  if (ec.mode === 'part' && erasePartial(e, ec.size || 10)) return;
   const els = document.elementsFromPoint(e.clientX, e.clientY);
   for (const x of els) {
     const hit = x.closest?.('[data-id]');
     const pageEl = x.closest?.('.page');
     if (!hit || !pageEl) continue;
     const p = +pageEl.dataset.pageNumber - 1, id = hit.dataset.id;
+    const ann = findAnn(p, id);
+    if (ec.mode === 'part' && ann?.type === 'ink') continue; // strokes are cut by erasePartial instead
     if (!gesture.erased) { pushUndo(); gesture.erased = true; }
     S.annots[p] = pageAnns(p).filter((a) => a.id !== id);
     changed(p);
     break;
   }
+}
+
+function erasePartial(e, sizePx) {
+  const pageEl = document.elementsFromPoint(e.clientX, e.clientY).map((x) => x.closest?.('.page')).find(Boolean);
+  if (!pageEl) { gesture.last = null; return false; }
+  const p = +pageEl.dataset.pageNumber - 1;
+  const pv = viewer.getPageView(p);
+  if (!pv?.viewport) return false;
+  const r = pageEl.getBoundingClientRect();
+  const cur = pv.viewport.convertToPdfPoint(e.clientX - r.left - pageEl.clientLeft, e.clientY - r.top - pageEl.clientTop);
+  const prev = gesture.last?.p === p ? gesture.last.pt : cur;
+  gesture.last = { p, pt: cur };
+  const rad = sizePx / pv.viewport.scale;
+  let hitOther = false, cutAny = false;
+  for (const a of [...pageAnns(p)]) {
+    if (a.type !== 'ink') continue;
+    const reach = rad + (a.width || 1) / 2;
+    const paths = cutPaths(a.paths, prev, cur, reach);
+    if (!paths) continue;
+    if (!gesture.erased) { pushUndo(); gesture.erased = true; }
+    cutAny = true;
+    if (paths.length) { a.paths = paths; a.modified = Date.now(); }
+    else S.annots[p] = pageAnns(p).filter((x) => x.id !== a.id);
+  }
+  if (cutAny) changed(p);
+  // let the whole-object eraser handle non-stroke annotations under the pointer
+  for (const x of document.elementsFromPoint(e.clientX, e.clientY)) {
+    const hit = x.closest?.('[data-id]');
+    if (hit && findAnn(p, hit.dataset.id)?.type !== 'ink') { hitOther = true; break; }
+  }
+  return !hitOther;
+}
+/** remove the parts of the strokes within `reach` of the eraser segment a→b. null if nothing was touched. */
+function cutPaths(paths, a, b, reach) {
+  const r2 = reach * reach;
+  const bx = b[0] - a[0], by = b[1] - a[1], bl = bx * bx + by * by;
+  const near = (x, y) => {
+    let t = bl ? ((x - a[0]) * bx + (y - a[1]) * by) / bl : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const dx = x - (a[0] + t * bx), dy = y - (a[1] + t * by);
+    return dx * dx + dy * dy <= r2;
+  };
+  let touched = false;
+  const out = [];
+  const step = Math.max(0.3, reach / 3);
+  for (const fl of paths) {
+    // quick reject: no point of the stroke anywhere near
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (let i = 0; i < fl.length; i += 2) { minX = Math.min(minX, fl[i]); maxX = Math.max(maxX, fl[i]); minY = Math.min(minY, fl[i + 1]); maxY = Math.max(maxY, fl[i + 1]); }
+    if (Math.min(a[0], b[0]) - reach > maxX || Math.max(a[0], b[0]) + reach < minX || Math.min(a[1], b[1]) - reach > maxY || Math.max(a[1], b[1]) + reach < minY) { out.push(fl); continue; }
+    // walk the stroke in small steps, keeping the runs outside the eraser
+    let run = [], hit = false;
+    const flush = () => { if (run.length >= 4) out.push(run); run = []; };
+    for (let i = 0; i < fl.length; i += 2) {
+      const x1 = fl[i], y1 = fl[i + 1];
+      if (i > 0) {
+        const x0 = fl[i - 2], y0 = fl[i - 1], d = Math.hypot(x1 - x0, y1 - y0), n = Math.ceil(d / step);
+        for (let k = 1; k < n; k++) {
+          const x = x0 + ((x1 - x0) * k) / n, y = y0 + ((y1 - y0) * k) / n;
+          if (near(x, y)) { hit = true; flush(); } else run.push(Math.round(x * 100) / 100, Math.round(y * 100) / 100);
+        }
+      }
+      if (near(x1, y1)) { hit = true; flush(); } else run.push(x1, y1);
+    }
+    if (!hit) { out.push(fl); continue; }
+    touched = true;
+    flush();
+  }
+  return touched ? out : null;
 }
 
 // ---------------- free text editing ----------------

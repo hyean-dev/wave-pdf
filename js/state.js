@@ -20,6 +20,7 @@ const DEFAULT_CFG = {
   pen: { color: '#212121', width: 1.5 },
   marker: { color: '#FFF176', width: 12 },
   freetext: { color: '#212121', size: 12 },
+  eraser: { mode: 'part', size: 10 },
   shape: { color: '#E53935', width: 1.5, kind: 'square' },
   note: { color: '#FFD54F' },
   penOnly: false,

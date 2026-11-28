@@ -15,7 +15,7 @@ import * as NV from './native.js';
 if (window.__waveGate) await window.__waveGate;
 
 
-const APP_VERSION = '1.22.1';
+const APP_VERSION = '1.23.0';
 const container = $('#viewerContainer');
 
 // ---------------- icons ----------------
@@ -113,6 +113,13 @@ function renderToolOptions() {
   if (t === 'underline' || t === 'strike') parts.push(swatchRow('ink', CFG[t]));
   if (t === 'pen') parts.push(swatchRow('ink', CFG.pen), slider('굵기', CFG.pen, 'width', 0.5, 8, 0.5));
   if (t === 'marker') parts.push(swatchRow('highlight', CFG.marker), slider('굵기', CFG.marker, 'width', 4, 30, 1));
+  if (t === 'eraser') {
+    const ec = CFG.eraser || (CFG.eraser = { mode: 'part', size: 10 });
+    const seg = el('div', { class: 'seg small', title: '부분: 펜·마커 선을 지나간 곳만 지워요 / 통째: 닿은 주석 전체를 지워요' });
+    for (const [v, l] of [['part', '부분'], ['whole', '통째']]) seg.append(el('button', { class: `seg-btn ${ec.mode === v ? 'on' : ''}`, onclick: () => { ec.mode = v; saveCfg(); renderToolOptions(); } }, l));
+    parts.push(seg);
+    if (ec.mode === 'part') parts.push(slider('크기', ec, 'size', 4, 40, 1));
+  }
   if (t === 'freetext') {
     const ft = CFG.freetext;
     // the size chosen here is remembered as the default for new text boxes
@@ -1078,6 +1085,17 @@ function renderBookmarks(body) {
   body.replaceChildren(...parts);
   markCurrentBookmark();
 }
+// eraser ring: shows how much a partial erase will take
+const eraserRing = el('div', { class: 'eraser-ring', hidden: true });
+document.body.append(eraserRing);
+container.addEventListener('pointermove', (e) => {
+  const on = S.tool === 'eraser' && (CFG.eraser?.mode || 'part') === 'part' && e.pointerType !== 'touch';
+  eraserRing.hidden = !on;
+  if (!on) return;
+  const d = (CFG.eraser?.size || 10) * 2;
+  Object.assign(eraserRing.style, { width: d + 'px', height: d + 'px', transform: `translate(${e.clientX - d / 2}px, ${e.clientY - d / 2}px)` });
+}, { passive: true });
+container.addEventListener('pointerleave', () => { eraserRing.hidden = true; });
 // the section being read = the last bookmark whose position is at or above the top of the screen
 // (by its exact spot on the page, not just the page: several articles often share one page)
 let bmClicked = null; // { i, scroll } — the one just clicked wins until the view moves
